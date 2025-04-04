@@ -1,0 +1,28 @@
+name: Actualización Automática de Actividad
+
+on:
+  schedule:
+    - cron: '0 0 * * *'  # Se ejecuta diariamente a medianoche UTC
+
+jobs:
+  update-activity:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout del repositorio
+        uses: actions/checkout@v2
+
+      - name: Actualizar log de actividad
+        run: |
+          echo "Actividad registrada el $(date)" >> activity.log
+
+      - name: Configurar Git
+        run: |
+          git config --local user.email "phab0@yahoo.com.ar"
+          git config --local user.name "phab0s"
+
+      - name: Commit y Push de la actualización
+        run: |
+          git add activity.log
+          git commit -m "Actualización de actividad: $(date)" || echo "Sin cambios para commitear"
+          git push origin ${{ github.ref }}
