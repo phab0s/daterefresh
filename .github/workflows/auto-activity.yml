@@ -2,7 +2,8 @@ name: Actualización Automática de Actividad
 
 on:
   schedule:
-    - cron: '0 0 * * *'  # Se ejecuta diariamente a medianoche UTC
+    - cron: '0 0 * * *'  # Ejecución diaria a medianoche UTC
+  workflow_dispatch:    # Permite ejecutar el workflow manualmente
 
 jobs:
   update-activity:
@@ -18,8 +19,8 @@ jobs:
 
       - name: Configurar Git
         run: |
-          git config --local user.email "phab0@yahoo.com.ar"
-          git config --local user.name "phab0s"
+          git config --local user.email "tu-email@example.com"
+          git config --local user.name "Tu Nombre"
 
       - name: Commit y Push de la actualización
         run: |
