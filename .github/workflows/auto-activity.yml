@@ -12,6 +12,9 @@ jobs:
     steps:
       - name: Checkout del repositorio
         uses: actions/checkout@v2
+        with:
+          token: ${{ secrets.ACCESS_TOKEN }}
+          persist-credentials: true
 
       - name: Actualizar log de actividad
         run: |
