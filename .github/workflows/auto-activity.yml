@@ -2,6 +2,68 @@ name: Crear Canal y Workflow 365
 
 on:
   schedule:
+    - cron: '0 0 * * 1'  # cada lunes UTC
+  workflow_dispatch:
+
+jobs:
+  activity:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v2
+
+    - name: Registrar actividad local
+      run: echo "Actividad local $(date)" >> activity.log
+
+    - name: Login to Azure
+      uses: azure/login@v2
+      with:
+        client-id: ${{ secrets.AZURE_CLIENT_ID }}
+        tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+        allow-no-subscriptions: true
+
+    - name: Obtener token Graph
+      id: get_token
+      run: |
+        echo "::set-output name=TOKEN::$(az account get-access-token --resource https://graph.microsoft.com --query accessToken -o tsv)"
+
+    - name: Crear canal en Teams
+      env:
+        TOKEN: ${{ steps.get_token.outputs.TOKEN }}
+      run: |
+        curl -X POST https://graph.microsoft.com/v1.0/teams/${{ secrets.MS_TEAMS_TEAM_ID }}/channels \
+          -H "Authorization: Bearer $TOKEN" \
+          -H "Content-Type: application/json" \
+          -d "{\"displayName\":\"auto-${{ github.run_number }}\",\"description\":\"Canal automático\"}"
+
+    - name: Subir archivo a SharePoint
+      env:
+        TOKEN: ${{ steps.get_token.outputs.TOKEN }}
+      run: |
+        echo "Contenido $(date)" > reporte-$(date +%Y%m%d).txt
+        curl -X PUT \
+          https://graph.microsoft.com/v1.0/sites/${{ secrets.SHAREPOINT_SITE_ID }}/drive/root:/auto-$(date +%Y%m%d).txt:/content \
+          -H "Authorization: Bearer $TOKEN" \
+          --upload-file reporte-$(date +%Y%m%d).txt
+
+    - name: Ejecutar Flow en Power Automate
+      env:
+        TOKEN: ${{ steps.get_token.outputs.TOKEN }}
+      run: |
+        curl -X POST \
+          https://graph.microsoft.com/v1.0/flows/${{ secrets.POWER_AUTOMATE_FLOW_ID }}/triggers/manual/run \
+          -H "Authorization: Bearer $TOKEN" \
+          -H "Content-Type: application/json" \
+          -d '{}'
+
+    - name: Commit & Push
+      run: |
+        git add activity.log || true
+        git commit -m "Actividad completa $(date)" || echo "Sin cambios"
+        git push
+
+on:
+  schedule:
     - cron: '0 0 * * 1'  # Lunes semanal (UTC)
   workflow_dispatch:
 
@@ -16,7 +78,7 @@ jobs:
       run: echo "Actividad local $(date)" >> activity.log
 
     - name: Login Azure
-      uses: azure/login@v1
+      uses: azure/login@v2
       with:
         creds: |
           {
