@@ -1,4 +1,4 @@
-name: Flujo Actividad MS365 Completo
+name: Crear Canal y Workflow 365
 
 on:
   schedule:
