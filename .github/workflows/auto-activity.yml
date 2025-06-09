@@ -2,7 +2,7 @@ name: Crear Canal y Workflow 365
 
 on:
   schedule:
-    - cron: '0 0 * * 1'  # cada lunes UTC
+    - cron: '0 0 * * 1'
   workflow_dispatch:
 
 jobs:
@@ -17,17 +17,16 @@ jobs:
       - name: Login to Azure
         uses: azure/login@v2
         with:
-          creds: |
-            {
-              "tenantId": "${{ secrets.AZURE_TENANT_ID }}",
-              "clientId": "${{ secrets.AZURE_CLIENT_ID }}",
-              "clientSecret": "${{ secrets.AZURE_CLIENT_SECRET }}"
-            }
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          allow-no-subscriptions: true
 
       - name: Obtener token Graph
         id: get_token
         run: |
-          echo "TOKEN=$(az account get-access-token --resource https://graph.microsoft.com --query accessToken -o tsv)" >> $GITHUB_OUTPUT
+          echo "TOKEN=$(az account get-access-token \
+            --resource https://graph.microsoft.com \
+            --query accessToken -o tsv)" >> $GITHUB_OUTPUT
 
       - name: Crear canal en Teams
         env:
