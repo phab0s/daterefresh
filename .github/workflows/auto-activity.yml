@@ -13,12 +13,12 @@ jobs:
   activity:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v3
 
       - name: Registrar actividad local
         run: echo "Actividad local $(date)" >> activity.log
 
-      - name: Login to Azure
+      - name: Login to Azure con OIDC
         uses: azure/login@v2
         with:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
@@ -36,7 +36,8 @@ jobs:
         env:
           TOKEN: ${{ steps.get_token.outputs.TOKEN }}
         run: |
-          curl -X POST https://graph.microsoft.com/v1.0/teams/${{ secrets.MS_TEAMS_TEAM_ID }}/channels \
+          curl -X POST \
+            https://graph.microsoft.com/v1.0/teams/${{ secrets.MS_TEAMS_TEAM_ID }}/channels \
             -H "Authorization: Bearer $TOKEN" \
             -H "Content-Type: application/json" \
             -d "{\"displayName\":\"auto-${{ github.run_number }}\",\"description\":\"Canal automático\"}"
