@@ -1,31 +1,34 @@
 name: Crear Canal y Workflow 365
 
-permissions:
-  id-token: write
-  contents: read
-
 on:
   schedule:
-    - cron: '0 0 * * 1'
+    - cron: '0 0 * * 1'  # Ejecutar cada lunes a medianoche UTC
   workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: write
 
 jobs:
   activity:
     runs-on: ubuntu-latest
+
     steps:
-      - uses: actions/checkout@v3
+      - name: Checkout del repositorio
+        uses: actions/checkout@v2
 
       - name: Registrar actividad local
         run: echo "Actividad local $(date)" >> activity.log
 
-      - name: Login to Azure con OIDC
+      - name: Login con Azure (OIDC)
         uses: azure/login@v2
         with:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
           allow-no-subscriptions: true
 
-      - name: Obtener token Graph
+      - name: Obtener token de Microsoft Graph
         id: get_token
         run: |
           echo "TOKEN=$(az account get-access-token \
@@ -36,21 +39,22 @@ jobs:
         env:
           TOKEN: ${{ steps.get_token.outputs.TOKEN }}
         run: |
-          curl -X POST \
-            https://graph.microsoft.com/v1.0/teams/${{ secrets.MS_TEAMS_TEAM_ID }}/channels \
+          curl -X POST https://graph.microsoft.com/v1.0/teams/${{ secrets.MS_TEAMS_TEAM_ID }}/channels \
             -H "Authorization: Bearer $TOKEN" \
             -H "Content-Type: application/json" \
-            -d "{\"displayName\":\"auto-${{ github.run_number }}\",\"description\":\"Canal automático\"}"
+            -d "{\"displayName\":\"auto-${{ github.run_number }}\",\"description\":\"Canal automático generado por GitHub Actions\"}"
 
       - name: Subir archivo a SharePoint
         env:
           TOKEN: ${{ steps.get_token.outputs.TOKEN }}
         run: |
-          echo "Contenido $(date)" > reporte-$(date +%Y%m%d).txt
+          FECHA=$(date +%Y%m%d)
+          ARCHIVO="reporte-$FECHA.txt"
+          echo "Contenido generado automáticamente el $(date)" > $ARCHIVO
           curl -X PUT \
-            https://graph.microsoft.com/v1.0/sites/${{ secrets.SHAREPOINT_SITE_ID }}/drive/root:/auto-$(date +%Y%m%d).txt:/content \
+            "https://graph.microsoft.com/v1.0/sites/${{ secrets.SHAREPOINT_SITE_ID }}/drive/root:/$ARCHIVO:/content" \
             -H "Authorization: Bearer $TOKEN" \
-            --upload-file reporte-$(date +%Y%m%d).txt
+            --upload-file $ARCHIVO
 
       - name: Ejecutar Flow en Power Automate
         env:
@@ -62,10 +66,10 @@ jobs:
             -H "Content-Type: application/json" \
             -d '{}'
 
-      - name: Commit & Push
+      - name: Commit y Push de los cambios
         run: |
           git config --global user.name 'github-actions[bot]'
           git config --global user.email 'github-actions[bot]@users.noreply.github.com'
           git add activity.log || true
-          git commit -m "Actividad completa $(date)" || echo "Sin cambios"
-          git push
+          git commit -m "Actividad completa $(date)" || echo "Sin cambios para commitear"
+          git push origin HEAD || true
