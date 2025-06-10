@@ -53,13 +53,14 @@ jobs:
         id: create_todo_task
         env:
           TOKEN: ${{ steps.get_token.outputs.TOKEN }}
+          USER_EMAIL: ${{ secrets.MS_GRAPH_USER_EMAIL }}
         run: |
           echo "Intentando crear tarea en Microsoft To Do..."
           JSON_BODY=$(jq -n \
             --arg title "Revisar logs de actividad E5 - ${{ env.UNIQUE_SUFFIX }}" \
             '{title: $title}')
 
-          RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "https://graph.microsoft.com/v1.0/me/todo/lists/tasks" \
+          RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "https://graph.microsoft.com/v1.0/users/${{ env.USER_EMAIL }}/todo/lists/tasks" \
             -H "Authorization: Bearer $TOKEN" \
             -H "Content-Type: application/json" \
             -d "$JSON_BODY")
@@ -213,7 +214,7 @@ jobs:
         run: |
           if [ -n "$TODO_TASK_ID" ]; then
             echo "Limpiando: Intentando eliminar tarea '$TODO_TASK_ID' de To Do..."
-            curl -s -X DELETE "https://graph.microsoft.com/v1.0/me/todo/lists/tasks/$TODO_TASK_ID" -H "Authorization: Bearer $TOKEN"
+            curl -s -X DELETE "https://graph.microsoft.com/v1.0/users/${{ env.USER_EMAIL }}/todo/lists/tasks/$TODO_TASK_ID" -H "Authorization: Bearer $TOKEN"
             echo "Intento de eliminación de tarea completado."
           fi
           
@@ -229,7 +230,6 @@ jobs:
             echo "Intento de eliminación de evento completado."
           fi
 
-          # Eliminar documento de OneDrive
           echo "Limpiando: Intentando eliminar documento de OneDrive..."
           curl -s -X DELETE "https://graph.microsoft.com/v1.0/me/drive/root:/reportes/actividad-${{ env.UNIQUE_SUFFIX }}.txt" -H "Authorization: Bearer $TOKEN"
           echo "Intento de eliminación de documento de OneDrive completado."
