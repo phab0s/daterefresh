@@ -2,16 +2,12 @@ name: Actividad de Desarrollo E5
 
 on:
   schedule:
-    # Se ejecuta los lunes, miércoles y viernes a las 10:00 UTC
-    - cron: '0 10 * * 1,3,5'
-  
-  # Permite la ejecución manual desde la pestaña Actions de GitHub.
-  workflow_dispatch: {}
+    - cron: '0 10 * * 1,3,5' # Se ejecuta Lunes, Miércoles y Viernes a las 10:00 UTC
+  workflow_dispatch: {} # Permite ejecución manual
 
-# Permisos necesarios para el workflow
 permissions:
-  id-token: write   # Para el login con Azure (OIDC)
-  contents: write   # Para hacer commit del log de actividad
+  id-token: write
+  contents: write
 
 jobs:
   activity:
@@ -31,15 +27,12 @@ jobs:
         with:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
-          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
           allow-no-subscriptions: true
 
       - name: 4. Obtener token de acceso para Microsoft Graph
         id: get_token
         run: |
-          TOKEN=$(az account get-access-token \
-            --resource https://graph.microsoft.com \
-            --query accessToken -o tsv)
+          TOKEN=$(az account get-access-token --resource https://graph.microsoft.com --query accessToken -o tsv)
           echo "TOKEN=$TOKEN" >> $GITHUB_OUTPUT
           echo "Token de acceso para Graph obtenido exitosamente."
 
@@ -56,25 +49,16 @@ jobs:
           USER_EMAIL: ${{ secrets.MS_GRAPH_USER_EMAIL }}
         run: |
           echo "Intentando crear tarea en Microsoft To Do..."
-          JSON_BODY=$(jq -n \
-            --arg title "Revisar logs de actividad E5 - ${{ env.UNIQUE_SUFFIX }}" \
-            '{title: $title}')
-
-          RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "https://graph.microsoft.com/v1.0/users/${{ env.USER_EMAIL }}/todo/lists/tasks" \
-            -H "Authorization: Bearer $TOKEN" \
-            -H "Content-Type: application/json" \
-            -d "$JSON_BODY")
-          
+          JSON_BODY=$(jq -n --arg title "Revisar logs de actividad E5 - ${{ env.UNIQUE_SUFFIX }}" '{title: $title}')
+          RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "https://graph.microsoft.com/v1.0/users/${{ env.USER_EMAIL }}/todo/lists/tasks" -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d "$JSON_BODY")
           HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
           BODY=$(echo "$RESPONSE" | sed '$d')
-
           if [ "$HTTP_CODE" -eq 201 ]; then
             TASK_ID=$(echo "$BODY" | jq -r '.id')
             echo "Tarea creada exitosamente con ID: $TASK_ID"
             echo "TODO_TASK_ID=$TASK_ID" >> $GITHUB_ENV
           else
-            echo "Error al crear la tarea. Código: $HTTP_CODE"
-            echo "Respuesta: $BODY"
+            echo "Error al crear la tarea. Código: $HTTP_CODE, Respuesta: $BODY"
             exit 1
           fi
 
@@ -85,19 +69,13 @@ jobs:
         run: |
           echo "Contenido generado automáticamente el $(date)" > temp_file.txt
           echo "Intentando subir archivo '${{ env.SHAREPOINT_FILE_NAME }}' a SharePoint..."
-          RESPONSE=$(curl -s -w "\n%{http_code}" -X PUT \
-            "https://graph.microsoft.com/v1.0/sites/$SHAREPOINT_SITE_ID/drive/root:/${{ env.SHAREPOINT_FILE_NAME }}:/content" \
-            -H "Authorization: Bearer $TOKEN" \
-            -T temp_file.txt)
-          
+          RESPONSE=$(curl -s -w "\n%{http_code}" -X PUT "https://graph.microsoft.com/v1.0/sites/$SHAREPOINT_SITE_ID/drive/root:/${{ env.SHAREPOINT_FILE_NAME }}:/content" -H "Authorization: Bearer $TOKEN" -T temp_file.txt)
           HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
           BODY=$(echo "$RESPONSE" | sed '$d')
-
           if [ "$HTTP_CODE" -eq 200 ] || [ "$HTTP_CODE" -eq 201 ]; then
             echo "Archivo '${{ env.SHAREPOINT_FILE_NAME }}' subido exitosamente a SharePoint."
           else
-            echo "Error al subir el archivo. Código: $HTTP_CODE"
-            echo "Respuesta: $BODY"
+            echo "Error al subir el archivo. Código: $HTTP_CODE, Respuesta: $BODY"
             exit 1
           fi
           rm temp_file.txt
@@ -107,10 +85,7 @@ jobs:
           POWER_AUTOMATE_HTTP_TRIGGER_URL: ${{ secrets.POWER_AUTOMATE_HTTP_TRIGGER_URL }}
         run: |
           echo "Intentando ejecutar Flow en Power Automate..."
-          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "${{ env.POWER_AUTOMATE_HTTP_TRIGGER_URL }}" \
-            -H "Content-Type: application/json" \
-            -d "{\"source\":\"GitHub Actions E5\",\"suffix\":\"${{ env.UNIQUE_SUFFIX }}\"}")
-
+          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "${{ env.POWER_AUTOMATE_HTTP_TRIGGER_URL }}" -H "Content-Type: application/json" -d "{\"source\":\"GitHub Actions E5\",\"suffix\":\"${{ env.UNIQUE_SUFFIX }}\"}")
           if [ "$HTTP_CODE" -eq 202 ]; then
             echo "Flow en Power Automate ejecutado exitosamente (Respuesta: $HTTP_CODE)."
           else
@@ -126,54 +101,32 @@ jobs:
           echo "Intentando crear evento en Calendario..."
           START_TIME=$(date -u -d '+1 hour' --iso-8601=seconds)
           END_TIME=$(date -u -d '+1 hour 5 minutes' --iso-8601=seconds)
-
-          JSON_BODY=$(jq -n \
-            --arg subject "Actividad E5 - ${{ env.UNIQUE_SUFFIX}}" \
-            --arg content "<p>Evento generado por GitHub Actions para mantener actividad E5.</p>" \
-            --arg startTime "$START_TIME" \
-            --arg endTime "$END_TIME" \
-            '{subject: $subject, body: {contentType: "HTML", content: $content}, start: {dateTime: $startTime, timeZone: "UTC"}, end: {dateTime: $endTime, timeZone: "UTC"}}')
-
-          RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "https://graph.microsoft.com/v1.0/users/$USER_EMAIL/calendar/events" \
-            -H "Authorization: Bearer $TOKEN" \
-            -H "Content-Type: application/json" \
-            -d "$JSON_BODY")
-          
+          JSON_BODY=$(jq -n --arg subject "Actividad E5 - ${{ env.UNIQUE_SUFFIX}}" --arg content "<p>Evento generado por GitHub Actions.</p>" --arg startTime "$START_TIME" --arg endTime "$END_TIME" '{subject: $subject, body: {contentType: "HTML", content: $content}, start: {dateTime: $startTime, timeZone: "UTC"}, end: {dateTime: $endTime, timeZone: "UTC"}}')
+          RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "https://graph.microsoft.com/v1.0/users/$USER_EMAIL/calendar/events" -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d "$JSON_BODY")
           HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
           BODY=$(echo "$RESPONSE" | sed '$d')
-
           if [ "$HTTP_CODE" -eq 201 ]; then
             EVENT_ID=$(echo "$BODY" | jq -r '.id')
             echo "Evento de calendario creado exitosamente con ID: $EVENT_ID"
             echo "OUTLOOK_EVENT_ID=$EVENT_ID" >> $GITHUB_ENV
           else
-            echo "Error al crear evento de calendario. Código: $HTTP_CODE"
-            echo "Respuesta: $BODY"
+            echo "Error al crear evento de calendario. Código: $HTTP_CODE, Respuesta: $BODY"
           fi
 
       - name: 10. Crear documento en OneDrive
         env:
           TOKEN: ${{ steps.get_token.outputs.TOKEN }}
-          USER_EMAIL: ${{ secrets.MS_GRAPH_USER_EMAIL }} # <-- AÑADE ESTA LÍNEA
+          USER_EMAIL: ${{ secrets.MS_GRAPH_USER_EMAIL }}
         run: |
           echo "Creando documento en OneDrive..."
-          CONTENT="Reporte de Actividad E5\nFecha: $(date)\nActividades realizadas:\n- Creación de tarea en To Do\n- Subida de archivo a SharePoint\n- Ejecución de Flow\n- Creación de evento en calendario"
-          
-          # La URL ahora usa /users/{email} en lugar de /me
-          RESPONSE=$(curl -s -w "\n%{http_code}" -X PUT \
-            "https://graph.microsoft.com/v1.0/users/${{ env.USER_EMAIL }}/drive/root:/reportes/actividad-${{ env.UNIQUE_SUFFIX }}.txt:/content" \
-            -H "Authorization: Bearer $TOKEN" \
-            -H "Content-Type: text/plain" \
-            --data-raw "$CONTENT")
-          
+          CONTENT="Reporte de Actividad E5\nFecha: $(date)"
+          RESPONSE=$(curl -s -w "\n%{http_code}" -X PUT "https://graph.microsoft.com/v1.0/users/${{ env.USER_EMAIL }}/drive/root:/Reportes/actividad-${{ env.UNIQUE_SUFFIX }}.txt:/content" -H "Authorization: Bearer $TOKEN" -H "Content-Type: text/plain" --data-raw "$CONTENT")
           HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
+          BODY=$(echo "$RESPONSE" | sed '$d')
           if [ "$HTTP_CODE" -eq 201 ] || [ "$HTTP_CODE" -eq 200 ]; then
             echo "Documento creado exitosamente en OneDrive"
           else
-            echo "Error al crear documento en OneDrive. Código: $HTTP_CODE"
-            # Añadimos la respuesta para poder depurar si falla
-            BODY=$(echo "$RESPONSE" | sed '$d')
-            echo "Respuesta: $BODY"
+            echo "Error al crear documento en OneDrive. Código: $HTTP_CODE, Respuesta: $BODY"
           fi
 
       - name: 11. Enviar correo con resumen
@@ -182,29 +135,14 @@ jobs:
           USER_EMAIL: ${{ secrets.MS_GRAPH_USER_EMAIL }}
         run: |
           echo "Enviando correo con resumen de actividades..."
-          EMAIL_BODY="Se han completado las siguientes actividades para ${{ env.UNIQUE_SUFFIX }}:\n\n"
-          EMAIL_BODY+="- Tarea To Do: Revisar logs de actividad E5\n"
-          EMAIL_BODY+="- Archivo SharePoint: ${{ env.SHAREPOINT_FILE_NAME }}\n"
-          EMAIL_BODY+="- Evento calendario: Actividad E5\n"
-          EMAIL_BODY+="- Documento OneDrive: actividad-${{ env.UNIQUE_SUFFIX }}.txt\n"
-          
-          JSON_BODY=$(jq -n \
-            --arg to "$USER_EMAIL" \
-            --arg subject "Resumen Actividad E5 - ${{ env.UNIQUE_SUFFIX }}" \
-            --arg content "$EMAIL_BODY" \
-            '{message: {subject: $subject, body: {contentType: "Text", content: $content}, toRecipients: [{emailAddress: {address: $to}}]}}')
-
-          RESPONSE=$(curl -s -w "\n%{http_code}" -X POST \
-            "https://graph.microsoft.com/v1.0/me/sendMail" \
-            -H "Authorization: Bearer $TOKEN" \
-            -H "Content-Type: application/json" \
-            -d "$JSON_BODY")
-          
+          EMAIL_BODY="Se han completado las actividades para ${{ env.UNIQUE_SUFFIX }}.\n- Tarea To Do\n- Archivo SharePoint\n- Evento Calendario\n- Documento OneDrive"
+          JSON_BODY=$(jq -n --arg to "$USER_EMAIL" --arg subject "Resumen Actividad E5 - ${{ env.UNIQUE_SUFFIX }}" --arg content "$EMAIL_BODY" '{message: {subject: $subject, body: {contentType: "Text", content: $content}, toRecipients: [{emailAddress: {address: $to}}]}}')
+          RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "https://graph.microsoft.com/v1.0/users/${{ secrets.MS_GRAPH_USER_EMAIL }}/sendMail" -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d "$JSON_BODY")
           HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
           if [ "$HTTP_CODE" -eq 202 ]; then
-            echo "Correo enviado exitosamente"
+            echo "Correo enviado exitosamente."
           else
-            echo "Error al enviar correo. Código: $HTTP_CODE"
+            echo "Error al enviar correo. Código: $HTTP_CODE."
           fi
 
       - name: Limpieza - Eliminar recursos creados
@@ -216,28 +154,21 @@ jobs:
           TODO_TASK_ID: ${{ env.TODO_TASK_ID }}
           FILE_NAME: ${{ env.SHAREPOINT_FILE_NAME }}
           EVENT_ID: ${{ env.OUTLOOK_EVENT_ID }}
+          UNIQUE_SUFFIX: ${{ env.UNIQUE_SUFFIX }}
         run: |
           if [ -n "$TODO_TASK_ID" ]; then
-            echo "Limpiando: Intentando eliminar tarea '$TODO_TASK_ID' de To Do..."
-            curl -s -X DELETE "https://graph.microsoft.com/v1.0/users/${{ env.USER_EMAIL }}/todo/lists/tasks/$TODO_TASK_ID" -H "Authorization: Bearer $TOKEN"
-            echo "Intento de eliminación de tarea completado."
+            curl -s -X DELETE "https://graph.microsoft.com/v1.0/users/$USER_EMAIL/todo/lists/tasks/$TODO_TASK_ID" -H "Authorization: Bearer $TOKEN"
           fi
-          
           if [ -n "$FILE_NAME" ]; then
-            echo "Limpiando: Intentando eliminar archivo '$FILE_NAME' de SharePoint..."
             curl -s -X DELETE "https://graph.microsoft.com/v1.0/sites/$SHAREPOINT_SITE_ID/drive/root:/$FILE_NAME" -H "Authorization: Bearer $TOKEN"
-            echo "Intento de eliminación de archivo completado."
           fi
-          
           if [ -n "$EVENT_ID" ]; then
-            echo "Limpiando: Intentando eliminar evento '$EVENT_ID' del Calendario..."
             curl -s -X DELETE "https://graph.microsoft.com/v1.0/users/$USER_EMAIL/calendar/events/$EVENT_ID" -H "Authorization: Bearer $TOKEN"
-            echo "Intento de eliminación de evento completado."
           fi
-
-          echo "Limpiando: Intentando eliminar documento de OneDrive..."
-          curl -s -X DELETE "https://graph.microsoft.com/v1.0/me/drive/root:/reportes/actividad-${{ env.UNIQUE_SUFFIX }}.txt" -H "Authorization: Bearer $TOKEN"
-          echo "Intento de eliminación de documento de OneDrive completado."
+          if [ -n "$UNIQUE_SUFFIX" ]; then
+            curl -s -X DELETE "https://graph.microsoft.com/v1.0/users/$USER_EMAIL/drive/root:/Reportes/actividad-$UNIQUE_SUFFIX.txt" -H "Authorization: Bearer $TOKEN"
+          fi
+          echo "Limpieza completada."
 
       - name: 12. Registrar fin de actividad y hacer commit
         if: success()
@@ -245,7 +176,6 @@ jobs:
           echo "Fin de actividad de desarrollo: $(date)" >> activity.log
           git config user.name 'github-actions[bot]'
           git config user.email 'github-actions[bot]@users.noreply.github.com'
-          
           if ! git diff --quiet activity.log; then
             git add activity.log
             git commit -m "Registro: Actividad E5 (${{ env.UNIQUE_SUFFIX }})"
