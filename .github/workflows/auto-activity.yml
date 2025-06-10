@@ -2,8 +2,8 @@ name: Actividad de Desarrollo E5
 
 on:
   schedule:
-    - cron: '0 10 * * 1,3,5' # Se ejecuta Lunes, Miércoles y Viernes a las 10:00 UTC
-  workflow_dispatch: {} # Permite ejecución manual
+    - cron: '0 10 * * 1,3,5'
+  workflow_dispatch: {}
 
 permissions:
   id-token: write
@@ -42,15 +42,41 @@ jobs:
           echo "SHAREPOINT_FILE_NAME=actividad-log-${UNIQUE_SUFFIX}.txt" >> $GITHUB_ENV
           echo "UNIQUE_SUFFIX=${UNIQUE_SUFFIX}" >> $GITHUB_ENV
 
-      - name: 6. Crear tarea en Microsoft To Do
-        id: create_todo_task
+      - name: 6. Obtener ID de la Lista de Tareas Principal
+        id: get_todo_list
         env:
           TOKEN: ${{ steps.get_token.outputs.TOKEN }}
           USER_EMAIL: ${{ secrets.MS_GRAPH_USER_EMAIL }}
         run: |
-          echo "Intentando crear tarea en Microsoft To Do..."
+          echo "Buscando la lista de tareas principal ('Tareas')..."
+          RESPONSE=$(curl -s -w "\n%{http_code}" -X GET "https://graph.microsoft.com/v1.0/users/${{ env.USER_EMAIL }}/todo/lists" -H "Authorization: Bearer $TOKEN")
+          HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
+          BODY=$(echo "$RESPONSE" | sed '$d')
+
+          if [ "$HTTP_CODE" -eq 200 ]; then
+            LIST_ID=$(echo "$BODY" | jq -r '.value[] | select(.displayName == "Tareas") | .id')
+            if [ -z "$LIST_ID" ]; then
+              echo "Error: No se encontró la lista de tareas con el nombre 'Tareas'."
+              exit 1
+            fi
+            echo "ID de la lista de tareas encontrado: $LIST_ID"
+            echo "TODO_LIST_ID=$LIST_ID" >> $GITHUB_OUTPUT
+          else
+            echo "Error al obtener las listas de tareas. Código: $HTTP_CODE, Respuesta: $BODY"
+            exit 1
+          fi
+
+      - name: 7. Crear tarea en Microsoft To Do
+        id: create_todo_task
+        needs: get_todo_list
+        env:
+          TOKEN: ${{ steps.get_token.outputs.TOKEN }}
+          USER_EMAIL: ${{ secrets.MS_GRAPH_USER_EMAIL }}
+          TODO_LIST_ID: ${{ steps.get_todo_list.outputs.TODO_LIST_ID }}
+        run: |
+          echo "Intentando crear tarea en la lista ID: ${{ env.TODO_LIST_ID }}"
           JSON_BODY=$(jq -n --arg title "Revisar logs de actividad E5 - ${{ env.UNIQUE_SUFFIX }}" '{title: $title}')
-          RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "https://graph.microsoft.com/v1.0/users/${{ env.USER_EMAIL }}/todo/lists/tasks" -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d "$JSON_BODY")
+          RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "https://graph.microsoft.com/v1.0/users/${{ env.USER_EMAIL }}/todo/lists/${{ env.TODO_LIST_ID }}/tasks" -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d "$JSON_BODY")
           HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
           BODY=$(echo "$RESPONSE" | sed '$d')
           if [ "$HTTP_CODE" -eq 201 ]; then
@@ -62,7 +88,10 @@ jobs:
             exit 1
           fi
 
-      - name: 7. Subir archivo a SharePoint
+      # El resto de los pasos (8, 9, 10, 11, 12) permanecen igual, solo se re-numeran.
+
+      - name: 8. Subir archivo a SharePoint
+        # ...código sin cambios...
         env:
           TOKEN: ${{ steps.get_token.outputs.TOKEN }}
           SHAREPOINT_SITE_ID: ${{ secrets.SHAREPOINT_SITE_ID }}
@@ -80,7 +109,8 @@ jobs:
           fi
           rm temp_file.txt
 
-      - name: 8. Ejecutar Flow en Power Automate
+      - name: 9. Ejecutar Flow en Power Automate
+        # ...código sin cambios...
         env:
           POWER_AUTOMATE_HTTP_TRIGGER_URL: ${{ secrets.POWER_AUTOMATE_HTTP_TRIGGER_URL }}
         run: |
@@ -92,7 +122,8 @@ jobs:
             echo "Error al ejecutar Flow en Power Automate (Respuesta: $HTTP_CODE)."
           fi
 
-      - name: 9. Crear evento en Calendario de Outlook
+      - name: 10. Crear evento en Calendario de Outlook
+        # ...código sin cambios...
         id: create_calendar_event
         env:
           TOKEN: ${{ steps.get_token.outputs.TOKEN }}
@@ -113,7 +144,8 @@ jobs:
             echo "Error al crear evento de calendario. Código: $HTTP_CODE, Respuesta: $BODY"
           fi
 
-      - name: 10. Crear documento en OneDrive
+      - name: 11. Crear documento en OneDrive
+        # ...código sin cambios...
         env:
           TOKEN: ${{ steps.get_token.outputs.TOKEN }}
           USER_EMAIL: ${{ secrets.MS_GRAPH_USER_EMAIL }}
@@ -129,7 +161,8 @@ jobs:
             echo "Error al crear documento en OneDrive. Código: $HTTP_CODE, Respuesta: $BODY"
           fi
 
-      - name: 11. Enviar correo con resumen
+      - name: 12. Enviar correo con resumen
+        # ...código sin cambios...
         env:
           TOKEN: ${{ steps.get_token.outputs.TOKEN }}
           USER_EMAIL: ${{ secrets.MS_GRAPH_USER_EMAIL }}
@@ -151,13 +184,14 @@ jobs:
           TOKEN: ${{ steps.get_token.outputs.TOKEN }}
           SHAREPOINT_SITE_ID: ${{ secrets.SHAREPOINT_SITE_ID }}
           USER_EMAIL: ${{ secrets.MS_GRAPH_USER_EMAIL }}
-          TODO_TASK_ID: ${{ env.TODO_TASK_ID }}
+          TODO_LIST_ID: ${{ steps.get_todo_list.outputs.TODO_LIST_ID }}
+          TODO_TASK_ID: ${{ steps.create_todo_task.outputs.TODO_TASK_ID }}
           FILE_NAME: ${{ env.SHAREPOINT_FILE_NAME }}
           EVENT_ID: ${{ env.OUTLOOK_EVENT_ID }}
           UNIQUE_SUFFIX: ${{ env.UNIQUE_SUFFIX }}
         run: |
           if [ -n "$TODO_TASK_ID" ]; then
-            curl -s -X DELETE "https://graph.microsoft.com/v1.0/users/$USER_EMAIL/todo/lists/tasks/$TODO_TASK_ID" -H "Authorization: Bearer $TOKEN"
+            curl -s -X DELETE "https://graph.microsoft.com/v1.0/users/$USER_EMAIL/todo/lists/$TODO_LIST_ID/tasks/$TODO_TASK_ID" -H "Authorization: Bearer $TOKEN"
           fi
           if [ -n "$FILE_NAME" ]; then
             curl -s -X DELETE "https://graph.microsoft.com/v1.0/sites/$SHAREPOINT_SITE_ID/drive/root:/$FILE_NAME" -H "Authorization: Bearer $TOKEN"
@@ -170,7 +204,8 @@ jobs:
           fi
           echo "Limpieza completada."
 
-      - name: 12. Registrar fin de actividad y hacer commit
+      - name: 13. Registrar fin de actividad y hacer commit
+        # ...código sin cambios...
         if: success()
         run: |
           echo "Fin de actividad de desarrollo: $(date)" >> activity.log
