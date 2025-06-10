@@ -154,12 +154,14 @@ jobs:
       - name: 10. Crear documento en OneDrive
         env:
           TOKEN: ${{ steps.get_token.outputs.TOKEN }}
+          USER_EMAIL: ${{ secrets.MS_GRAPH_USER_EMAIL }} # <-- AÑADE ESTA LÍNEA
         run: |
           echo "Creando documento en OneDrive..."
           CONTENT="Reporte de Actividad E5\nFecha: $(date)\nActividades realizadas:\n- Creación de tarea en To Do\n- Subida de archivo a SharePoint\n- Ejecución de Flow\n- Creación de evento en calendario"
           
+          # La URL ahora usa /users/{email} en lugar de /me
           RESPONSE=$(curl -s -w "\n%{http_code}" -X PUT \
-            "https://graph.microsoft.com/v1.0/me/drive/root:/reportes/actividad-${{ env.UNIQUE_SUFFIX }}.txt:/content" \
+            "https://graph.microsoft.com/v1.0/users/${{ env.USER_EMAIL }}/drive/root:/reportes/actividad-${{ env.UNIQUE_SUFFIX }}.txt:/content" \
             -H "Authorization: Bearer $TOKEN" \
             -H "Content-Type: text/plain" \
             --data-raw "$CONTENT")
@@ -169,6 +171,9 @@ jobs:
             echo "Documento creado exitosamente en OneDrive"
           else
             echo "Error al crear documento en OneDrive. Código: $HTTP_CODE"
+            # Añadimos la respuesta para poder depurar si falla
+            BODY=$(echo "$RESPONSE" | sed '$d')
+            echo "Respuesta: $BODY"
           fi
 
       - name: 11. Enviar correo con resumen
