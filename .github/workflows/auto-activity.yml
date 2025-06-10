@@ -68,7 +68,6 @@ jobs:
 
       - name: 7. Crear tarea en Microsoft To Do
         id: create_todo_task
-        needs: get_todo_list
         env:
           TOKEN: ${{ steps.get_token.outputs.TOKEN }}
           USER_EMAIL: ${{ secrets.MS_GRAPH_USER_EMAIL }}
@@ -88,10 +87,7 @@ jobs:
             exit 1
           fi
 
-      # El resto de los pasos (8, 9, 10, 11, 12) permanecen igual, solo se re-numeran.
-
       - name: 8. Subir archivo a SharePoint
-        # ...código sin cambios...
         env:
           TOKEN: ${{ steps.get_token.outputs.TOKEN }}
           SHAREPOINT_SITE_ID: ${{ secrets.SHAREPOINT_SITE_ID }}
@@ -110,7 +106,6 @@ jobs:
           rm temp_file.txt
 
       - name: 9. Ejecutar Flow en Power Automate
-        # ...código sin cambios...
         env:
           POWER_AUTOMATE_HTTP_TRIGGER_URL: ${{ secrets.POWER_AUTOMATE_HTTP_TRIGGER_URL }}
         run: |
@@ -123,7 +118,6 @@ jobs:
           fi
 
       - name: 10. Crear evento en Calendario de Outlook
-        # ...código sin cambios...
         id: create_calendar_event
         env:
           TOKEN: ${{ steps.get_token.outputs.TOKEN }}
@@ -145,7 +139,6 @@ jobs:
           fi
 
       - name: 11. Crear documento en OneDrive
-        # ...código sin cambios...
         env:
           TOKEN: ${{ steps.get_token.outputs.TOKEN }}
           USER_EMAIL: ${{ secrets.MS_GRAPH_USER_EMAIL }}
@@ -162,7 +155,6 @@ jobs:
           fi
 
       - name: 12. Enviar correo con resumen
-        # ...código sin cambios...
         env:
           TOKEN: ${{ steps.get_token.outputs.TOKEN }}
           USER_EMAIL: ${{ secrets.MS_GRAPH_USER_EMAIL }}
@@ -205,7 +197,6 @@ jobs:
           echo "Limpieza completada."
 
       - name: 13. Registrar fin de actividad y hacer commit
-        # ...código sin cambios...
         if: success()
         run: |
           echo "Fin de actividad de desarrollo: $(date)" >> activity.log
