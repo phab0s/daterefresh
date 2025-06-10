@@ -43,11 +43,6 @@ jobs:
           echo "TOKEN=$TOKEN" >> $GITHUB_OUTPUT
           echo "Token de acceso para Graph obtenido exitosamente."
 
-      - name: Diagnostico - Listar usuarios del tenant
-        run: |
-          echo "Intentando listar los usuarios existentes en el tenant..."
-          az ad user list --output table
-
       - name: 5. Configurar variables dinámicas
         run: |
           UNIQUE_SUFFIX=$(date +%Y%m%d-%H%M%S)
