@@ -2,14 +2,16 @@ name: Actividad de Desarrollo E5
 
 on:
   schedule:
-    # Se ejecuta cada lunes a las 00:00 UTC para generar actividad semanal.
+    # Se ejecuta cada lunes a las 00:00 UTC.
     - cron: '0 0 * * 1'
+  
   # Permite la ejecución manual desde la pestaña Actions de GitHub.
-  workflow_dispatch:
+  workflow_dispatch: {}
 
+# Permisos necesarios para el workflow
 permissions:
-  id-token: write   # Necesario para el login con Azure (OIDC).
-  contents: write   # Necesario para hacer commit del log de actividad.
+  id-token: write   # Para el login con Azure (OIDC)
+  contents: write   # Para hacer commit del log de actividad
 
 jobs:
   activity:
@@ -46,8 +48,6 @@ jobs:
           echo "TEAMS_CHANNEL_NAME=auto-canal-${UNIQUE_SUFFIX}" >> $GITHUB_ENV
           echo "SHAREPOINT_FILE_NAME=actividad-log-${UNIQUE_SUFFIX}.txt" >> $GITHUB_ENV
           echo "UNIQUE_SUFFIX=${UNIQUE_SUFFIX}" >> $GITHUB_ENV
-
-      # --- Llamadas a la API de Microsoft Graph para simular actividad ---
 
       - name: 6. Crear canal en Microsoft Teams
         id: create_teams_channel
@@ -103,7 +103,6 @@ jobs:
           POWER_AUTOMATE_HTTP_TRIGGER_URL: ${{ secrets.POWER_AUTOMATE_HTTP_TRIGGER_URL }}
         run: |
           echo "Intentando ejecutar Flow en Power Automate..."
-          # El trigger HTTP de Power Automate devuelve un código 202 (Accepted) si se inicia correctamente.
           HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "${{ env.POWER_AUTOMATE_HTTP_TRIGGER_URL }}" \
             -H "Content-Type: application/json" \
             -d "{\"source\":\"GitHub Actions E5\",\"suffix\":\"${{ env.UNIQUE_SUFFIX }}\"}")
@@ -112,7 +111,6 @@ jobs:
             echo "Flow en Power Automate ejecutado exitosamente (Respuesta: $HTTP_CODE)."
           else
             echo "Error al ejecutar Flow en Power Automate (Respuesta: $HTTP_CODE)."
-            # No hacemos 'exit 1' para no detener todo el workflow por este paso.
           fi
 
       - name: 9. Crear evento en Calendario de Outlook
@@ -122,11 +120,9 @@ jobs:
           USER_EMAIL: ${{ secrets.MS_GRAPH_USER_EMAIL }}
         run: |
           echo "Intentando crear evento en Calendario..."
-          # Creamos el evento para dentro de 1 hora en formato ISO 8601 UTC
           START_TIME=$(date -u -d '+1 hour' --iso-8601=seconds)
           END_TIME=$(date -u -d '+1 hour 5 minutes' --iso-8601=seconds)
 
-          # Escapamos el JSON correctamente para el cuerpo de la solicitud
           JSON_BODY=$(jq -n \
             --arg subject "Actividad E5 - ${{ env.UNIQUE_SUFFIX}}" \
             --arg content "<p>Evento generado por GitHub Actions para mantener actividad E5.</p>" \
@@ -151,51 +147,41 @@ jobs:
             echo "Respuesta: $BODY"
           fi
 
-      # --- Pasos de Limpieza (MUY RECOMENDADO) ---
-      # La condición "if: always()" asegura que estos pasos se ejecuten siempre,
-      # incluso si un paso anterior falló, para no dejar basura en tu tenant.
-
-      - name: Limpieza - Eliminar canal de Teams
-        if: always() && env.TEAMS_CHANNEL_ID
-        env:
-          TOKEN: ${{ steps.get_token.outputs.TOKEN }}
-          TEAM_ID: ${{ secrets.MS_TEAMS_TEAM_ID }}
-        run: |
-          echo "Limpiando: Intentando eliminar canal '${{ env.TEAMS_CHANNEL_ID }}'..."
-          curl -s -X DELETE "https://graph.microsoft.com/v1.0/teams/$TEAM_ID/channels/${{ env.TEAMS_CHANNEL_ID }}" \
-            -H "Authorization: Bearer $TOKEN"
-          echo "Intento de eliminación de canal completado."
-
-      - name: Limpieza - Eliminar archivo de SharePoint
+      - name: Limpieza - Eliminar recursos creados
+        # Este paso se ejecuta siempre para evitar dejar basura, incluso si un paso anterior falla.
         if: always()
         env:
           TOKEN: ${{ steps.get_token.outputs.TOKEN }}
+          TEAM_ID: ${{ secrets.MS_TEAMS_TEAM_ID }}
           SHAREPOINT_SITE_ID: ${{ secrets.SHAREPOINT_SITE_ID }}
-        run: |
-          echo "Limpiando: Intentando eliminar archivo '${{ env.SHAREPOINT_FILE_NAME }}'..."
-          curl -s -X DELETE "https://graph.microsoft.com/v1.0/sites/$SHAREPOINT_SITE_ID/drive/root:/${{ env.SHAREPOINT_FILE_NAME }}" \
-            -H "Authorization: Bearer $TOKEN"
-          echo "Intento de eliminación de archivo completado."
-
-      - name: Limpieza - Eliminar evento de Calendario
-        if: always() && env.OUTLOOK_EVENT_ID
-        env:
-          TOKEN: ${{ steps.get_token.outputs.TOKEN }}
           USER_EMAIL: ${{ secrets.MS_GRAPH_USER_EMAIL }}
+          CHANNEL_ID: ${{ env.TEAMS_CHANNEL_ID }}
+          FILE_NAME: ${{ env.SHAREPOINT_FILE_NAME }}
+          EVENT_ID: ${{ env.OUTLOOK_EVENT_ID }}
         run: |
-          echo "Limpiando: Intentando eliminar evento '${{ env.OUTLOOK_EVENT_ID }}'..."
-          curl -s -X DELETE "https://graph.microsoft.com/v1.0/users/$USER_EMAIL/calendar/events/${{ env.OUTLOOK_EVENT_ID }}" \
-            -H "Authorization: Bearer $TOKEN"
-          echo "Intento de eliminación de evento completado."
+          if [ -n "$CHANNEL_ID" ]; then
+            echo "Limpiando: Intentando eliminar canal '$CHANNEL_ID'..."
+            curl -s -X DELETE "https://graph.microsoft.com/v1.0/teams/$TEAM_ID/channels/$CHANNEL_ID" -H "Authorization: Bearer $TOKEN"
+            echo "Intento de eliminación de canal completado."
+          fi
+          if [ -n "$FILE_NAME" ]; then
+            echo "Limpiando: Intentando eliminar archivo '$FILE_NAME'..."
+            curl -s -X DELETE "https://graph.microsoft.com/v1.0/sites/$SHAREPOINT_SITE_ID/drive/root:/$FILE_NAME" -H "Authorization: Bearer $TOKEN"
+            echo "Intento de eliminación de archivo completado."
+          fi
+          if [ -n "$EVENT_ID" ]; then
+            echo "Limpiando: Intentando eliminar evento '$EVENT_ID'..."
+            curl -s -X DELETE "https://graph.microsoft.com/v1.0/users/$USER_EMAIL/calendar/events/$EVENT_ID" -H "Authorization: Bearer $TOKEN"
+            echo "Intento de eliminación de evento completado."
+          fi
 
       - name: 10. Registrar fin de actividad y hacer commit
-        # Este paso solo se ejecuta si el workflow principal tuvo éxito
         if: success()
         run: |
           echo "Fin de actividad de desarrollo: $(date)" >> activity.log
           git config user.name 'github-actions[bot]'
           git config user.email 'github-actions[bot]@users.noreply.github.com'
-          # Añade y hace commit solo si hay cambios en el archivo de log
+          
           if ! git diff --quiet activity.log; then
             git add activity.log
             git commit -m "Registro: Actividad E5 (${{ env.UNIQUE_SUFFIX }})"
