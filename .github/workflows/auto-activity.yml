@@ -1,4 +1,4 @@
-name: Actividad de Desarrollo E5
+name: Desarrollo de Proyecto 365
 
 on:
   schedule:
@@ -149,6 +149,27 @@ jobs:
             echo "Error al enviar correo. Código: $HTTP_CODE, Respuesta: $BODY"
             exit 1
           fi
+          
+      - name: 12. Enviar Mensaje a Canal de Teams
+        env:
+          TOKEN: ${{ steps.get_token.outputs.TOKEN }}
+          TEAM_ID: ${{ secrets.MS_TEAMS_TEAM_ID }}
+          CHANNEL_ID: ${{ secrets.MS_TEAMS_CHANNEL_ID }}
+        run: |
+          echo "Enviando mensaje de actividad al canal de Teams..."
+          MESSAGE_BODY="Actividad de desarrollo E5 completada para el sufijo: ${{ env.UNIQUE_SUFFIX }}. El workflow se ejecutó exitosamente."
+          JSON_BODY=$(jq -n --arg content "$MESSAGE_BODY" '{body: {content: $content}}')
+
+          RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "https://graph.microsoft.com/v1.0/teams/${{ env.TEAM_ID }}/channels/${{ env.CHANNEL_ID }}/messages" -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d "$JSON_BODY")
+          HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
+          BODY=$(echo "$RESPONSE" | sed '$d')
+          
+          if [ "$HTTP_CODE" -eq 201 ]; then
+            echo "Mensaje enviado exitosamente al canal de Teams."
+          else
+            echo "Error al enviar el mensaje a Teams. Código: $HTTP_CODE, Respuesta: $BODY"
+            exit 1
+          fi
 
       - name: Limpieza - Eliminar recursos creados
         if: always()
@@ -175,7 +196,7 @@ jobs:
           fi
           echo "Limpieza completada."
 
-      - name: 12. Registrar fin de actividad y hacer commit
+      - name: 13. Registrar fin de actividad y hacer commit
         if: success()
         run: |
           echo "Fin de actividad de desarrollo: $(date)" >> activity.log
