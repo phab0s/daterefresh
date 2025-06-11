@@ -139,7 +139,7 @@ jobs:
         run: |
           echo "Enviando correo con resumen de actividades..."
           EMAIL_BODY="Se han completado las actividades para ${{ env.UNIQUE_SUFFIX }}.\n- Actualización de Perfil\n- Archivo SharePoint\n- Evento Calendario\n- Documento OneDrive"
-          JSON_BODY=$(jq -n --arg to "$USER_EMAIL" --arg subject "Resumen Actividad E5 - ${{ env.UNIQUE_SUFFIX }}" --arg content "$EMAIL_BODY" '{message: {subject: $subject, body: {contentType: "Text", content: $content}, toRecipients: [{emailAddress: {address: $to}}]}}')
+          JSON_BODY=$(jq -n --arg to "$USER_EMAIL" --arg subject "Resumen Actividad de Desarrollo - ${{ env.UNIQUE_SUFFIX }}" --arg content "$EMAIL_BODY" '{message: {subject: $subject, body: {contentType: "Text", content: $content}, toRecipients: [{emailAddress: {address: $to}}]}}')
           RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "https://graph.microsoft.com/v1.0/users/${{ secrets.MS_GRAPH_USER_EMAIL }}/sendMail" -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d "$JSON_BODY")
           HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
           if [ "$HTTP_CODE" -eq 202 ]; then
@@ -150,15 +150,44 @@ jobs:
             exit 1
           fi
           
-      - name: 12. Enviar Mensaje a Canal de Teams
+      - name: 12. Enviar Mensaje a Canal de Teams (Modo Importación)
         env:
           TOKEN: ${{ steps.get_token.outputs.TOKEN }}
           TEAM_ID: ${{ secrets.MS_TEAMS_TEAM_ID }}
           CHANNEL_ID: ${{ secrets.MS_TEAMS_CHANNEL_ID }}
+          # Importante: Necesitamos el Client ID de tu aplicación para el campo 'from'.
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }} 
         run: |
-          echo "Enviando mensaje de actividad al canal de Teams..."
-          MESSAGE_BODY="Actividad de desarrollo E5 completada para el sufijo: ${{ env.UNIQUE_SUFFIX }}. El workflow se ejecutó exitosamente."
-          JSON_BODY=$(jq -n --arg content "$MESSAGE_BODY" '{body: {content: $content}}')
+          echo "Enviando mensaje de actividad al canal de Teams en modo importación..."
+          MESSAGE_BODY="Actividad de desarrollo completada para el sufijo: <b>${{ env.UNIQUE_SUFFIX }}</b>. El workflow se ejecutó exitosamente."
+          
+          # La API requiere una fecha en formato ISO 8601 para el campo 'createdDateTime'.
+          TIMESTAMP=$(date -u --iso-8601=seconds)
+
+          # --- INICIO DEL CAMBIO IMPORTANTE ---
+          # Este es el nuevo cuerpo JSON. Cumple con el formato de importación.
+          # 1. Especificamos una 'createdDateTime'.
+          # 2. Indicamos que el mensaje viene 'from' una aplicación, usando su ID y un nombre.
+          # 3. El contenido del mensaje va en formato HTML.
+          JSON_BODY=$(jq -n \
+            --arg createdDateTime "$TIMESTAMP" \
+            --arg appId "$AZURE_CLIENT_ID" \
+            --arg appName "Bot de GitHub Actions" \
+            --arg content "$MESSAGE_BODY" \
+            '{
+              createdDateTime: $createdDateTime,
+              from: {
+                application: {
+                  id: $appId,
+                  displayName: $appName
+                }
+              },
+              body: {
+                contentType: "html",
+                content: $content
+              }
+            }')
+          # --- FIN DEL CAMBIO IMPORTANTE ---
 
           RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "https://graph.microsoft.com/v1.0/teams/${{ env.TEAM_ID }}/channels/${{ env.CHANNEL_ID }}/messages" -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d "$JSON_BODY")
           HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
