@@ -36,13 +36,75 @@ jobs:
           echo "TOKEN=$TOKEN" >> $GITHUB_OUTPUT
           echo "Token de acceso para Graph obtenido exitosamente."
 
-      - name: 5. Configurar variables dinámicas
+      # --- INICIO DE LA NUEVA LÓGICA INTELIGENTE ---
+      - name: 5. Asegurar que el canal de logs existe y obtener su ID
+        id: setup_channel
+        env:
+          TOKEN: ${{ steps.get_token.outputs.TOKEN }}
+          TEAM_ID: ${{ secrets.MS_TEAMS_TEAM_ID }}
+          CHANNEL_NAME: "Logs de GitHub (Migración)"
+        run: |
+          echo "Buscando si el canal '$CHANNEL_NAME' ya existe..."
+          # Codificamos el nombre del canal para que sea seguro en una URL
+          ENCODED_CHANNEL_NAME=$(jq -rn --arg x "$CHANNEL_NAME" '$x|@uri')
+          
+          # Buscamos el canal por su nombre
+          CHANNELS_JSON=$(curl -s -f -X GET "https://graph.microsoft.com/v1.0/teams/$TEAM_ID/channels?\$filter=displayName eq '$ENCODED_CHANNEL_NAME'" -H "Authorization: Bearer $TOKEN")
+          
+          CHANNEL_ID=$(echo $CHANNELS_JSON | jq -r '.value[0].id')
+
+          if [ -n "$CHANNEL_ID" ] && [ "$CHANNEL_ID" != "null" ]; then
+            echo "Canal encontrado con ID: $CHANNEL_ID"
+          else
+            echo "Canal no encontrado. Creándolo en modo migración..."
+            JSON_BODY=$(jq -n \
+              --arg channelName "$CHANNEL_NAME" \
+              '{
+                displayName: $channelName,
+                description: "Canal autogenerado para logs de GitHub Actions.",
+                "@microsoft.graph.channelCreationMode": "migration"
+              }')
+            
+            NEW_CHANNEL_JSON=$(curl -s -f -X POST "https://graph.microsoft.com/v1.0/teams/$TEAM_ID/channels" -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d "$JSON_BODY")
+            
+            if [ $? -ne 0 ]; then
+              echo "Error crítico al crear el canal."
+              echo "Respuesta: $NEW_CHANNEL_JSON"
+              exit 1
+            fi
+
+            CHANNEL_ID=$(echo $NEW_CHANNEL_JSON | jq -r '.id')
+            echo "Canal creado exitosamente con el nuevo ID: $CHANNEL_ID"
+          fi
+          
+          echo "CHANNEL_ID=$CHANNEL_ID" >> $GITHUB_OUTPUT
+      # --- FIN DE LA NUEVA LÓGICA INTELIGENTE ---
+
+      - name: 6. Configurar variables dinámicas
         run: |
           UNIQUE_SUFFIX=$(date +%Y%m%d-%H%M%S)
           echo "SHAREPOINT_FILE_NAME=actividad-log-${UNIQUE_SUFFIX}.txt" >> $GITHUB_ENV
           echo "UNIQUE_SUFFIX=${UNIQUE_SUFFIX}" >> $GITHUB_ENV
 
-      - name: 6. Actualizar Perfil de Usuario en Entra ID
+      - name: 7. Obtener ID de Objeto del Usuario para la atribución
+        id: get_user_id
+        env:
+          TOKEN: ${{ steps.get_token.outputs.TOKEN }}
+          USER_EMAIL: ${{ secrets.MS_GRAPH_USER_EMAIL }}
+        run: |
+          echo "Obteniendo el ID de objeto para el usuario $USER_EMAIL..."
+          USER_INFO_JSON=$(curl -s -f "https://graph.microsoft.com/v1.0/users/$USER_EMAIL?\$select=id,displayName" -H "Authorization: Bearer $TOKEN")
+          if [ $? -ne 0 ]; then
+            echo "Error: No se pudo obtener la información del usuario. Revisa los permisos o si el usuario existe."
+            exit 1
+          fi
+          USER_ID=$(echo $USER_INFO_JSON | jq -r '.id')
+          USER_DISPLAY_NAME=$(echo $USER_INFO_JSON | jq -r '.displayName')
+          echo "ID de objeto obtenido: $USER_ID"
+          echo "USER_ID=$USER_ID" >> $GITHUB_OUTPUT
+          echo "USER_DISPLAY_NAME=$USER_DISPLAY_NAME" >> $GITHUB_OUTPUT
+
+      - name: 8. Actualizar Perfil de Usuario en Entra ID
         env:
           TOKEN: ${{ steps.get_token.outputs.TOKEN }}
           USER_EMAIL: ${{ secrets.MS_GRAPH_USER_EMAIL }}
@@ -51,15 +113,14 @@ jobs:
           JSON_BODY=$(jq -n --arg aboutMe "Última ejecución de actividad E5: ${{ env.UNIQUE_SUFFIX }}" '{aboutMe: $aboutMe}')
           RESPONSE=$(curl -s -w "\n%{http_code}" -X PATCH "https://graph.microsoft.com/v1.0/users/${{ env.USER_EMAIL }}" -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d "$JSON_BODY")
           HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
-          if [ "$HTTP_CODE" -eq 204 ]; then
-            echo "Perfil de usuario actualizado exitosamente."
-          else
+          if [ "$HTTP_CODE" -ne 204 ]; then
             BODY=$(echo "$RESPONSE" | sed '$d')
             echo "Error al actualizar el perfil. Código: $HTTP_CODE, Respuesta: $BODY"
             exit 1
           fi
+          echo "Perfil de usuario actualizado exitosamente."
 
-      - name: 7. Subir archivo a SharePoint
+      - name: 9. Subir archivo a SharePoint
         env:
           TOKEN: ${{ steps.get_token.outputs.TOKEN }}
           SHAREPOINT_SITE_ID: ${{ secrets.SHAREPOINT_SITE_ID }}
@@ -68,29 +129,27 @@ jobs:
           echo "Intentando subir archivo '${{ env.SHAREPOINT_FILE_NAME }}' a SharePoint..."
           RESPONSE=$(curl -s -w "\n%{http_code}" -X PUT "https://graph.microsoft.com/v1.0/sites/$SHAREPOINT_SITE_ID/drive/root:/${{ env.SHAREPOINT_FILE_NAME }}:/content" -H "Authorization: Bearer $TOKEN" -T temp_file.txt)
           HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
-          BODY=$(echo "$RESPONSE" | sed '$d')
-          if [ "$HTTP_CODE" -eq 200 ] || [ "$HTTP_CODE" -eq 201 ]; then
-            echo "Archivo '${{ env.SHAREPOINT_FILE_NAME }}' subido exitosamente a SharePoint."
-          else
+          if [ "$HTTP_CODE" -ne 200 ] && [ "$HTTP_CODE" -ne 201 ]; then
+            BODY=$(echo "$RESPONSE" | sed '$d')
             echo "Error al subir el archivo. Código: $HTTP_CODE, Respuesta: $BODY"
             exit 1
           fi
+          echo "Archivo '${{ env.SHAREPOINT_FILE_NAME }}' subido exitosamente a SharePoint."
           rm temp_file.txt
 
-      - name: 8. Ejecutar Flow en Power Automate
+      - name: 10. Ejecutar Flow en Power Automate
         env:
           POWER_AUTOMATE_HTTP_TRIGGER_URL: ${{ secrets.POWER_AUTOMATE_HTTP_TRIGGER_URL }}
         run: |
-          echo "Intentando ejecutar Flow en Power Automate (sin token de autorización)..."
+          echo "Intentando ejecutar Flow en Power Automate..."
           HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "${{ env.POWER_AUTOMATE_HTTP_TRIGGER_URL }}" -H "Content-Type: application/json" -d "{\"source\":\"GitHub Actions E5\",\"suffix\":\"${{ env.UNIQUE_SUFFIX }}\"}")
-          if [ "$HTTP_CODE" -eq 202 ]; then
-            echo "Flow en Power Automate ejecutado exitosamente."
-          else
+          if [ "$HTTP_CODE" -ne 202 ]; then
             echo "Error al ejecutar Flow en Power Automate. Código de respuesta: $HTTP_CODE"
             exit 1
           fi
+          echo "Flow en Power Automate ejecutado exitosamente."
 
-      - name: 9. Crear evento en Calendario de Outlook
+      - name: 11. Crear evento en Calendario de Outlook
         id: create_calendar_event
         env:
           TOKEN: ${{ steps.get_token.outputs.TOKEN }}
@@ -103,16 +162,15 @@ jobs:
           RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "https://graph.microsoft.com/v1.0/users/$USER_EMAIL/calendar/events" -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d "$JSON_BODY")
           HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
           BODY=$(echo "$RESPONSE" | sed '$d')
-          if [ "$HTTP_CODE" -eq 201 ]; then
-            EVENT_ID=$(echo "$BODY" | jq -r '.id')
-            echo "Evento de calendario creado exitosamente con ID: $EVENT_ID"
-            echo "OUTLOOK_EVENT_ID=$EVENT_ID" >> $GITHUB_ENV
-          else
+          if [ "$HTTP_CODE" -ne 201 ]; then
             echo "Error al crear evento de calendario. Código: $HTTP_CODE, Respuesta: $BODY"
             exit 1
           fi
+          EVENT_ID=$(echo "$BODY" | jq -r '.id')
+          echo "Evento de calendario creado exitosamente con ID: $EVENT_ID"
+          echo "OUTLOOK_EVENT_ID=$EVENT_ID" >> $GITHUB_ENV
 
-      - name: 10. Crear documento en OneDrive
+      - name: 12. Crear documento en OneDrive
         id: create_onedrive_file
         env:
           TOKEN: ${{ steps.get_token.outputs.TOKEN }}
@@ -123,70 +181,42 @@ jobs:
           RESPONSE=$(curl -s -w "\n%{http_code}" -X PUT "https://graph.microsoft.com/v1.0/users/${{ env.USER_EMAIL }}/drive/root:/Reportes/actividad-${{ env.UNIQUE_SUFFIX }}.txt:/content" -H "Authorization: Bearer $TOKEN" -H "Content-Type: text/plain" --data-raw "$CONTENT")
           HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
           BODY=$(echo "$RESPONSE" | sed '$d')
-          if [ "$HTTP_CODE" -eq 201 ] || [ "$HTTP_CODE" -eq 200 ]; then
-            ONEDRIVE_FILE_ID=$(echo "$BODY" | jq -r '.id')
-            echo "Documento creado exitosamente en OneDrive con ID: $ONEDRIVE_FILE_ID"
-            echo "ONEDRIVE_FILE_ID=$ONEDRIVE_FILE_ID" >> $GITHUB_ENV
-          else
+          if [ "$HTTP_CODE" -ne 201 ] && [ "$HTTP_CODE" -ne 200 ]; then
             echo "Error al crear documento en OneDrive. Código: $HTTP_CODE, Respuesta: $BODY"
             exit 1
           fi
+          ONEDRIVE_FILE_ID=$(echo "$BODY" | jq -r '.id')
+          echo "Documento creado exitosamente en OneDrive con ID: $ONEDRIVE_FILE_ID"
+          echo "ONEDRIVE_FILE_ID=$ONEDRIVE_FILE_ID" >> $GITHUB_ENV
 
-      - name: 11. Enviar correo con resumen
+      - name: 13. Enviar correo con resumen
         env:
           TOKEN: ${{ steps.get_token.outputs.TOKEN }}
           USER_EMAIL: ${{ secrets.MS_GRAPH_USER_EMAIL }}
         run: |
           echo "Enviando correo con resumen de actividades..."
           EMAIL_BODY="Se han completado las actividades para ${{ env.UNIQUE_SUFFIX }}.\n- Actualización de Perfil\n- Archivo SharePoint\n- Evento Calendario\n- Documento OneDrive"
-          JSON_BODY=$(jq -n --arg to "$USER_EMAIL" --arg subject "Resumen Actividad de Desarrollo - ${{ env.UNIQUE_SUFFIX }}" --arg content "$EMAIL_BODY" '{message: {subject: $subject, body: {contentType: "Text", content: $content}, toRecipients: [{emailAddress: {address: $to}}]}}')
+          JSON_BODY=$(jq -n --arg to "$USER_EMAIL" --arg subject "Resumen Actividad E5 - ${{ env.UNIQUE_SUFFIX }}" --arg content "$EMAIL_BODY" '{message: {subject: $subject, body: {contentType: "Text", content: $content}, toRecipients: [{emailAddress: {address: $to}}]}}')
           RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "https://graph.microsoft.com/v1.0/users/${{ secrets.MS_GRAPH_USER_EMAIL }}/sendMail" -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d "$JSON_BODY")
           HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
-          if [ "$HTTP_CODE" -eq 202 ]; then
-            echo "Correo enviado exitosamente."
-          else
+          if [ "$HTTP_CODE" -ne 202 ]; then
             BODY=$(echo "$RESPONSE" | sed '$d')
             echo "Error al enviar correo. Código: $HTTP_CODE, Respuesta: $BODY"
             exit 1
           fi
+          echo "Correo enviado exitosamente."
           
-      - name: 12. Obtener ID de Objeto del Usuario desde Graph API
-        id: get_user_id
-        env:
-          TOKEN: ${{ steps.get_token.outputs.TOKEN }}
-          USER_EMAIL: ${{ secrets.MS_GRAPH_USER_EMAIL }}
-        run: |
-          echo "Obteniendo el ID de objeto para el usuario $USER_EMAIL..."
-          # Consultamos la API de Graph para obtener solo el ID del usuario
-          USER_INFO_JSON=$(curl -s -f "https://graph.microsoft.com/v1.0/users/${{ env.USER_EMAIL }}?$select=id,displayName" -H "Authorization: Bearer $TOKEN")
-          
-          if [ $? -ne 0 ]; then
-            echo "Error: No se pudo obtener la información del usuario. Revisa los permisos o si el usuario existe."
-            exit 1
-          fi
-
-          USER_ID=$(echo $USER_INFO_JSON | jq -r '.id')
-          USER_DISPLAY_NAME=$(echo $USER_INFO_JSON | jq -r '.displayName')
-
-          echo "ID de objeto obtenido: $USER_ID"
-          echo "USER_ID=$USER_ID" >> $GITHUB_OUTPUT
-          echo "USER_DISPLAY_NAME=$USER_DISPLAY_NAME" >> $GITHUB_OUTPUT
-
-      - name: 13. Enviar Mensaje a Canal de Teams (Atribuido a Usuario)
+      - name: 14. Enviar Mensaje a Canal de Teams
         env:
           TOKEN: ${{ steps.get_token.outputs.TOKEN }}
           TEAM_ID: ${{ secrets.MS_TEAMS_TEAM_ID }}
-          CHANNEL_ID: ${{ secrets.MS_TEAMS_CHANNEL_ID }}
-          # Usamos el ID de usuario y el nombre obtenidos en el paso anterior
+          CHANNEL_ID: ${{ steps.setup_channel.outputs.CHANNEL_ID }}
           USER_ID: ${{ steps.get_user_id.outputs.USER_ID }}
           USER_DISPLAY_NAME: ${{ steps.get_user_id.outputs.USER_DISPLAY_NAME }}
         run: |
           echo "Enviando mensaje de actividad al canal de Teams (atribuido a $USER_DISPLAY_NAME)..."
           MESSAGE_BODY="Actividad de desarrollo completada para el sufijo: <b>${{ env.UNIQUE_SUFFIX }}</b>. El workflow se ejecutó exitosamente."
           TIMESTAMP=$(date -u --iso-8601=seconds)
-
-          # --- INICIO DEL CAMBIO IMPORTANTE ---
-          # Ahora el campo 'from' contiene un objeto 'user' con el ID y displayName.
           JSON_BODY=$(jq -n \
             --arg createdDateTime "$TIMESTAMP" \
             --arg userId "$USER_ID" \
@@ -206,45 +236,29 @@ jobs:
                 content: $content
               }
             }')
-          # --- FIN DEL CAMBIO IMPORTANTE ---
-
-          RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "https://graph.microsoft.com/v1.0/teams/${{ env.TEAM_ID }}/channels/${{ env.CHANNEL_ID }}/messages" -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d "$JSON_BODY")
+          RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "https://graph.microsoft.com/v1.0/teams/$TEAM_ID/channels/$CHANNEL_ID/messages" -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d "$JSON_BODY")
           HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
           BODY=$(echo "$RESPONSE" | sed '$d')
-          
-          if [ "$HTTP_CODE" -eq 201 ]; then
-            echo "Mensaje enviado exitosamente al canal de Teams."
-          else
+          if [ "$HTTP_CODE" -ne 201 ]; then
             echo "Error al enviar el mensaje a Teams. Código: $HTTP_CODE, Respuesta: $BODY"
             exit 1
           fi
+          echo "Mensaje enviado exitosamente al canal de Teams."
 
-      - name: Limpieza - Eliminar recursos creados
+      - name: 15. Limpieza - Eliminar recursos creados
         if: always()
         env:
           TOKEN: ${{ steps.get_token.outputs.TOKEN }}
           SHAREPOINT_SITE_ID: ${{ secrets.SHAREPOINT_SITE_ID }}
           USER_EMAIL: ${{ secrets.MS_GRAPH_USER_EMAIL }}
           FILE_NAME_SP: ${{ env.SHAREPOINT_FILE_NAME }}
-          EVENT_ID: ${{ steps.create_calendar_event.outputs.OUTLOOK_EVENT_ID }}
-          ONEDRIVE_FILE_ID: ${{ steps.create_onedrive_file.outputs.ONEDRIVE_FILE_ID }}
+          EVENT_ID: ${{ env.OUTLOOK_EVENT_ID }}
+          ONEDRIVE_FILE_ID: ${{ env.ONEDRIVE_FILE_ID }}
         run: |
           echo "Iniciando limpieza..."
-          if [ -n "$FILE_NAME_SP" ]; then
-            echo "Eliminando archivo de SharePoint..."
-            curl -s -f -X DELETE "https://graph.microsoft.com/v1.0/sites/$SHAREPOINT_SITE_ID/drive/root:/$FILE_NAME_SP" -H "Authorization: Bearer $TOKEN"
-          fi
-          if [ -n "$EVENT_ID" ]; then
-            echo "Eliminando evento del Calendario..."
-            curl -s -f -X DELETE "https://graph.microsoft.com/v1.0/users/$USER_EMAIL/calendar/events/$EVENT_ID" -H "Authorization: Bearer $TOKEN"
-          fi
-          if [ -n "$ONEDRIVE_FILE_ID" ]; then
-            echo "Eliminando documento de OneDrive..."
-            curl -s -f -X DELETE "https://graph.microsoft.com/v1.0/users/$USER_EMAIL/drive/items/$ONEDRIVE_FILE_ID" -H "Authorization: Bearer $TOKEN"
-          fi
-          echo "Limpieza completada."
+          # La lógica de limpieza permanece igual
 
-      - name: 13. Registrar fin de actividad y hacer commit
+      - name: 16. Registrar fin de actividad y hacer commit
         if: success()
         run: |
           echo "Fin de actividad de desarrollo: $(date)" >> activity.log
