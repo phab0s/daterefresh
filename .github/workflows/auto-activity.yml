@@ -150,36 +150,55 @@ jobs:
             exit 1
           fi
           
-      - name: 12. Enviar Mensaje a Canal de Teams (Modo Importación)
+      - name: 12. Obtener ID de Objeto del Usuario desde Graph API
+        id: get_user_id
+        env:
+          TOKEN: ${{ steps.get_token.outputs.TOKEN }}
+          USER_EMAIL: ${{ secrets.MS_GRAPH_USER_EMAIL }}
+        run: |
+          echo "Obteniendo el ID de objeto para el usuario $USER_EMAIL..."
+          # Consultamos la API de Graph para obtener solo el ID del usuario
+          USER_INFO_JSON=$(curl -s -f "https://graph.microsoft.com/v1.0/users/${{ env.USER_EMAIL }}?$select=id,displayName" -H "Authorization: Bearer $TOKEN")
+          
+          if [ $? -ne 0 ]; then
+            echo "Error: No se pudo obtener la información del usuario. Revisa los permisos o si el usuario existe."
+            exit 1
+          fi
+
+          USER_ID=$(echo $USER_INFO_JSON | jq -r '.id')
+          USER_DISPLAY_NAME=$(echo $USER_INFO_JSON | jq -r '.displayName')
+
+          echo "ID de objeto obtenido: $USER_ID"
+          echo "USER_ID=$USER_ID" >> $GITHUB_OUTPUT
+          echo "USER_DISPLAY_NAME=$USER_DISPLAY_NAME" >> $GITHUB_OUTPUT
+
+      - name: 13. Enviar Mensaje a Canal de Teams (Atribuido a Usuario)
         env:
           TOKEN: ${{ steps.get_token.outputs.TOKEN }}
           TEAM_ID: ${{ secrets.MS_TEAMS_TEAM_ID }}
           CHANNEL_ID: ${{ secrets.MS_TEAMS_CHANNEL_ID }}
-          # Importante: Necesitamos el Client ID de tu aplicación para el campo 'from'.
-          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }} 
+          # Usamos el ID de usuario y el nombre obtenidos en el paso anterior
+          USER_ID: ${{ steps.get_user_id.outputs.USER_ID }}
+          USER_DISPLAY_NAME: ${{ steps.get_user_id.outputs.USER_DISPLAY_NAME }}
         run: |
-          echo "Enviando mensaje de actividad al canal de Teams en modo importación..."
+          echo "Enviando mensaje de actividad al canal de Teams (atribuido a $USER_DISPLAY_NAME)..."
           MESSAGE_BODY="Actividad de desarrollo completada para el sufijo: <b>${{ env.UNIQUE_SUFFIX }}</b>. El workflow se ejecutó exitosamente."
-          
-          # La API requiere una fecha en formato ISO 8601 para el campo 'createdDateTime'.
           TIMESTAMP=$(date -u --iso-8601=seconds)
 
           # --- INICIO DEL CAMBIO IMPORTANTE ---
-          # Este es el nuevo cuerpo JSON. Cumple con el formato de importación.
-          # 1. Especificamos una 'createdDateTime'.
-          # 2. Indicamos que el mensaje viene 'from' una aplicación, usando su ID y un nombre.
-          # 3. El contenido del mensaje va en formato HTML.
+          # Ahora el campo 'from' contiene un objeto 'user' con el ID y displayName.
           JSON_BODY=$(jq -n \
             --arg createdDateTime "$TIMESTAMP" \
-            --arg appId "$AZURE_CLIENT_ID" \
-            --arg appName "Bot de GitHub Actions" \
+            --arg userId "$USER_ID" \
+            --arg userDisplayName "$USER_DISPLAY_NAME" \
             --arg content "$MESSAGE_BODY" \
             '{
               createdDateTime: $createdDateTime,
               from: {
-                application: {
-                  id: $appId,
-                  displayName: $appName
+                user: {
+                  id: $userId,
+                  displayName: $userDisplayName,
+                  userIdentityType: "aadUser"
                 }
               },
               body: {
