@@ -48,8 +48,8 @@ jobs:
           # Codificamos el nombre del canal para que sea seguro en una URL
           ENCODED_CHANNEL_NAME=$(jq -rn --arg x "$CHANNEL_NAME" '$x|@uri')
           
-          # Buscamos el canal por su nombre
-          CHANNELS_JSON=$(curl -s -f -X GET "https://graph.microsoft.com/v1.0/teams/$TEAM_ID/channels?\$filter=displayName eq '$ENCODED_CHANNEL_NAME'" -H "Authorization: Bearer $TOKEN")
+          # Buscamos el canal por su nombre (SIN la barra invertida antes de $filter)
+          CHANNELS_JSON=$(curl -s -f -X GET "https://graph.microsoft.com/v1.0/teams/$TEAM_ID/channels?$filter=displayName eq '$ENCODED_CHANNEL_NAME'" -H "Authorization: Bearer $TOKEN")
           
           CHANNEL_ID=$(echo $CHANNELS_JSON | jq -r '.value[0].id')
 
