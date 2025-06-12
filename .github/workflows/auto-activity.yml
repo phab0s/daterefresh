@@ -42,13 +42,14 @@ jobs:
         env:
           TOKEN: ${{ steps.get_token.outputs.TOKEN }}
           TEAM_ID: ${{ secrets.MS_TEAMS_TEAM_ID }}
-          CHANNEL_NAME: "Logs de GitHub (Migración)"
+          # --- CAMBIO IMPORTANTE: Nombre del canal simplificado y sin caracteres especiales ---
+          CHANNEL_NAME: "GitHub-Logs-Migracion"
         run: |
           echo "Buscando si el canal '$CHANNEL_NAME' ya existe..."
-          # Codificamos el nombre del canal para que sea seguro en una URL
+          # La codificación sigue siendo una buena práctica, aunque el nombre ya es seguro
           ENCODED_CHANNEL_NAME=$(jq -rn --arg x "$CHANNEL_NAME" '$x|@uri')
           
-          # Buscamos el canal por su nombre (SIN la barra invertida antes de $filter)
+          # La URL ahora es mucho más simple y menos propensa a errores de sintaxis
           CHANNELS_JSON=$(curl -s -f -X GET "https://graph.microsoft.com/v1.0/teams/$TEAM_ID/channels?$filter=displayName eq '$ENCODED_CHANNEL_NAME'" -H "Authorization: Bearer $TOKEN")
           
           CHANNEL_ID=$(echo $CHANNELS_JSON | jq -r '.value[0].id')
