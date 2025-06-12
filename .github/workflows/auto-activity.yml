@@ -39,11 +39,11 @@ jobs:
       # --- INICIO DE LA NUEVA LÓGICA INTELIGENTE ---
       - name: 5. Asegurar que el canal de logs existe (VERSIÓN CORREGIDA)
         id: setup_channel
-          env:
-            TOKEN: ${{ steps.get_token.outputs.TOKEN }}
-            TEAM_ID: ${{ secrets.MS_TEAMS_TEAM_ID }}
-            CHANNEL_NAME: "GitHub-Logs-Migracion"
-          run: |
+        env:
+          TOKEN: ${{ steps.get_token.outputs.TOKEN }}
+          TEAM_ID: ${{ secrets.MS_TEAMS_TEAM_ID }}
+          CHANNEL_NAME: "GitHub-Logs-Migracion"
+        run: |
             # Limpiar la variable TEAM_ID
             CLEAN_TEAM_ID=$(echo -n "$TEAM_ID" | tr -d '[:cntrl:]')
     
