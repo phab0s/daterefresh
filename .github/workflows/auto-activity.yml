@@ -37,30 +37,26 @@ jobs:
           echo "Token de acceso para Graph obtenido exitosamente."
 
       # --- INICIO DE LA NUEVA LÓGICA INTELIGENTE ---
-      - name: 5. Asegurar que el canal de logs existe (MODO DEPURACIÓN)
+      - name: 5. Asegurar que el canal de logs existe (CON LIMPIEZA)
         id: setup_channel
         env:
           TOKEN: ${{ steps.get_token.outputs.TOKEN }}
           TEAM_ID: ${{ secrets.MS_TEAMS_TEAM_ID }}
           CHANNEL_NAME: "GitHub-Logs-Migracion"
         run: |
-          echo "--- INICIO DEPURACIÓN ---"
-          echo "Revisando el valor de TEAM_ID: [${{ env.TEAM_ID }}]"
-          echo "Revisando el valor de CHANNEL_NAME: [${{ env.CHANNEL_NAME }}]"
-          
-          # Construimos la URL final en una variable para poder imprimirla
-          # Nota: He vuelto a poner la barra '\' antes de $filter como un último intento de quoting.
-          FINAL_URL="https://graph.microsoft.com/v1.0/teams/${{ env.TEAM_ID }}/channels?\$filter=displayName eq '${{ env.CHANNEL_NAME }}'"
-          
-          echo "URL que se pasará a cURL: [$FINAL_URL]"
-          echo "--- FIN DEPURACIÓN ---"
+          # --- INICIO DE LA CORRECCIÓN DEFINITIVA ---
+          # Limpiamos la variable TEAM_ID para eliminar posibles caracteres invisibles (\r, \n)
+          CLEAN_TEAM_ID=$(echo -n "${{ env.TEAM_ID }}" | tr -d '[:cntrl:]')
+          echo "ID de equipo depurado para la URL: [$CLEAN_TEAM_ID]"
+          # --- FIN DE LA CORRECCIÓN DEFINITIVA ---
 
           echo "Buscando si el canal '$CHANNEL_NAME' ya existe..."
           
-          # Ejecutamos el comando usando la variable
+          # Usamos la variable depurada para construir la URL
+          FINAL_URL="https://graph.microsoft.com/v1.0/teams/$CLEAN_TEAM_ID/channels?\$filter=displayName eq '$CHANNEL_NAME'"
+          
           CHANNELS_JSON=$(curl -s -f -X GET "$FINAL_URL" -H "Authorization: Bearer $TOKEN")
           
-          # El resto del script sigue igual...
           CHANNEL_ID=$(echo $CHANNELS_JSON | jq -r '.value[0].id')
 
           if [ -n "$CHANNEL_ID" ] && [ "$CHANNEL_ID" != "null" ]; then
@@ -68,7 +64,8 @@ jobs:
           else
             echo "Canal no encontrado. Creándolo en modo migración..."
             JSON_BODY=$(jq -n --arg channelName "$CHANNEL_NAME" '{displayName: $channelName, description: "Canal autogenerado para logs de GitHub Actions.", "@microsoft.graph.channelCreationMode": "migration"}')
-            NEW_CHANNEL_JSON=$(curl -s -f -X POST "https://graph.microsoft.com/v1.0/teams/${{ env.TEAM_ID }}/channels" -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d "$JSON_BODY")
+            # Usamos la variable depurada también aquí
+            NEW_CHANNEL_JSON=$(curl -s -f -X POST "https://graph.microsoft.com/v1.0/teams/$CLEAN_TEAM_ID/channels" -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d "$JSON_BODY")
             
             if [ $? -ne 0 ]; then
               echo "Error crítico al crear el canal."
