@@ -76,22 +76,36 @@ jobs:
               CHANNEL_ID=$(echo "$NEW_CHANNEL_JSON" | jq -r '.id')
               echo "✅ Canal creado exitosamente: $CHANNEL_ID"
             else
-              ERROR_CODE=$(echo "$NEW_CHANNEL_JSON" | jq -r '.error.code')
+              # --- INICIO DE LA CORRECCIÓN ---
+              # Extraer el código de error, priorizando 'innerError.code'.
+              ERROR_CODE=$(echo "$NEW_CHANNEL_JSON" | jq -r '.error.innerError.code // .error.code')
+              # --- FIN DE LA CORRECCIÓN ---
+              
               if [ "$ERROR_CODE" = "NameAlreadyExists" ]; then
-                echo "⚠️ ERROR CRÍTICO: El nombre '$CHANNEL_NAME' ya existe pero está en estado 'soft-deleted'. Ve al Admin Center de Teams para eliminarlo permanentemente o usa otro nombre."
-                echo "Intentando usar el canal 'General' como fallback."
+                echo "⚠️  ERROR DETECTADO: El nombre de canal '$CHANNEL_NAME' ya existe pero está en estado 'soft-deleted' o inaccesible."
+                echo "ACCIÓN MANUAL REQUERIDA: Elimina permanentemente el canal desde el Admin Center de Teams o usa un nombre de canal diferente en el workflow."
+                echo "Intentando usar el canal 'General' como fallback..."
                 CHANNEL_ID=$(echo "$ALL_CHANNELS_JSON" | jq -r '.value[]? | select(.displayName == "General") | .id')
-                if [ -z "$CHANNEL_ID" ] || [ "$CHANNEL_ID" = "null" ]; then echo "❌ Fallback fallido: No se pudo encontrar el canal 'General'." && exit 1; fi
+                if [ -z "$CHANNEL_ID" ] || [ "$CHANNEL_ID" = "null" ]; then
+                   echo "❌ Fallback fallido: No se pudo encontrar el canal 'General'."
+                   exit 1
+                fi
                 echo "✅ Usando canal 'General' como fallback. ID: $CHANNEL_ID"
               else
-                echo "❌ Error al crear canal. Código: $CREATE_HTTP_CODE" && echo "$NEW_CHANNEL_JSON" && exit 1
+                echo "❌ Error inesperado al crear canal. Código HTTP: $CREATE_HTTP_CODE. Código de Error API: $ERROR_CODE"
+                echo "$NEW_CHANNEL_JSON"
+                exit 1
               fi
             fi
           fi
           
           echo "Completando migración del canal para habilitar escritura..."
           MIGRATE_RESPONSE=$(curl -s -w "%{http_code}" -X POST "https://graph.microsoft.com/v1.0/teams/$CLEAN_TEAM_ID/channels/$CHANNEL_ID/completeMigration" -H "Authorization: Bearer $TOKEN")
-          if [ "$MIGRATE_RESPONSE" = "204" ]; then echo "✅ Canal listo para recibir mensajes."; else echo "ℹ️  No se pudo completar la migración (código $MIGRATE_RESPONSE), puede que ya estuviera lista."; fi
+          if [ "$MIGRATE_RESPONSE" = "204" ]; then
+            echo "✅ Canal listo para recibir mensajes."
+          else
+            echo "ℹ️  No se pudo completar la migración (código $MIGRATE_RESPONSE), puede que ya estuviera lista. Es seguro continuar."
+          fi
           echo "CHANNEL_ID=$CHANNEL_ID" >> $GITHUB_OUTPUT
 
       - name: 7. Enviar Mensaje a Canal de Teams
