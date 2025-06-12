@@ -107,15 +107,19 @@ jobs:
           UNIQUE_SUFFIX: ${{ steps.set_vars.outputs.UNIQUE_SUFFIX }}
         run: |
           echo "Enviando mensaje a Teams vía Webhook..."
-          # Formato de mensaje para Webhooks (Adaptive Cards o simple)
-          # Usaremos un formato simple de "tarjeta de mensaje"
+          
+          # --- INICIO DE LA CORRECCIÓN PARA LA FECHA ---
+          CURRENT_DATE_UTC=$(date -u --iso-8601=seconds)
           JSON_BODY=$(jq -n \
             --arg suffix "$UNIQUE_SUFFIX" \
+            --arg repo "${{ github.repository }}" \
+            --arg date_utc "$CURRENT_DATE_UTC" \
+          # --- FIN DE LA CORRECCIÓN ---
             '{
               "@type": "MessageCard",
               "@context": "http://schema.org/extensions",
               "themeColor": "0076D7",
-              "summary": "Actividad de Desarrollo",
+              "summary": "Actividad de Desarrollo E5",
               "sections": [{
                 "activityTitle": "🤖 <b>Actividad de desarrollo completada</b>",
                 "activitySubtitle": "Ejecutado desde GitHub Actions",
@@ -124,26 +128,21 @@ jobs:
                   "value": $suffix
                 }, {
                   "name": "Repositorio",
-                  "value": "${{ github.repository }}"
+                  "value": $repo
                 }, {
                   "name": "Fecha (UTC)",
-                  "value": "$(date -u --iso-8601=seconds)"
+                  "value": $date_utc
                 }],
                 "markdown": true
               }]
             }')
 
-          RESPONSE_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
-            -X POST \
-            -H "Content-Type: application/json" \
-            -d "$JSON_BODY" \
-            "$TEAMS_WEBHOOK_URL")
+          RESPONSE_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST -H "Content-Type: application/json" -d "$JSON_BODY" "$TEAMS_WEBHOOK_URL")
 
           if [ "$RESPONSE_CODE" -eq 200 ]; then
             echo "✅ Mensaje enviado exitosamente a Teams."
           else
             echo "❌ Error al enviar mensaje a Teams vía Webhook. Código de respuesta: $RESPONSE_CODE"
-            # No usamos 'exit 1' para que el workflow no falle por una notificación
           fi
 
       - name: 8. Actualizar Perfil de Usuario en Entra ID
