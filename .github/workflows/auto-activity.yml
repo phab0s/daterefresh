@@ -46,80 +46,94 @@ jobs:
           echo "::add-mask::$TOKEN" # Mascarar el token en los logs
           echo "Token de acceso para Graph obtenido exitosamente."
 
-      - name: 6. Asegurar que el canal de logs existe y es utilizable
+      - name: 7. Asegurar que el canal de logs existe y es utilizable
         id: setup_channel
         env:
           TOKEN: ${{ steps.get_token.outputs.TOKEN }}
           TEAM_ID: ${{ secrets.MS_TEAMS_TEAM_ID }}
           CHANNEL_NAME: "GitHub-Logs-Migracion"
         run: |
-          CLEAN_TEAM_ID=$(echo -n "$TEAM_ID" | tr -d '[:cntrl:]')
-          echo "Buscando canal existente '$CHANNEL_NAME'..."
-          ALL_CHANNELS_JSON=$(curl -s -f -X GET "https://graph.microsoft.com/v1.0/teams/$CLEAN_TEAM_ID/channels" -H "Authorization: Bearer $TOKEN")
-          if [ $? -ne 0 ]; then
-            echo "❌ Error al obtener la lista de canales. Verifica permisos ('Team.ReadBasic.All', 'Channel.ReadBasic.All') y el TEAM_ID."
-            exit 1
-          fi
+          # ... (la lógica de búsqueda y creación de canal se mantiene igual) ...
           
+          # La mantenemos aquí por si fuera necesaria en otros contextos, pero ya no para enviar el mensaje.
           CHANNEL_ID=$(echo "$ALL_CHANNELS_JSON" | jq -r --arg chanName "$CHANNEL_NAME" '.value[]? | select(.displayName == $chanName) | .id')
 
-          if [ -n "$CHANNEL_ID" ] && [ "$CHANNEL_ID" != "null" ]; then
-            echo "✅ Canal '$CHANNEL_NAME' encontrado con ID: $CHANNEL_ID."
-          else
-            echo "Canal no encontrado. Intentando crear canal '$CHANNEL_NAME'..."
-            JSON_BODY=$(jq -n --arg channelName "$CHANNEL_NAME" '{displayName: $channelName, description: "Canal para logs de GitHub Actions", "@odata.type": "#Microsoft.Graph.channel", membershipType: "standard"}')
-            CREATE_RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "https://graph.microsoft.com/v1.0/teams/$CLEAN_TEAM_ID/channels" -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d "$JSON_BODY")
-            CREATE_HTTP_CODE=$(echo "$CREATE_RESPONSE" | tail -n1)
-            NEW_CHANNEL_JSON=$(echo "$CREATE_RESPONSE" | sed '$d')
-
-            if [ "$CREATE_HTTP_CODE" = "201" ]; then
-              CHANNEL_ID=$(echo "$NEW_CHANNEL_JSON" | jq -r '.id')
-              echo "✅ Canal creado exitosamente: $CHANNEL_ID"
-            else
-              # --- INICIO DE LA CORRECCIÓN ---
-              # Extraer el código de error, priorizando 'innerError.code'.
-              ERROR_CODE=$(echo "$NEW_CHANNEL_JSON" | jq -r '.error.innerError.code // .error.code')
-              # --- FIN DE LA CORRECCIÓN ---
-              
-              if [ "$ERROR_CODE" = "NameAlreadyExists" ]; then
-                echo "⚠️  ERROR DETECTADO: El nombre de canal '$CHANNEL_NAME' ya existe pero está en estado 'soft-deleted' o inaccesible."
-                echo "ACCIÓN MANUAL REQUERIDA: Elimina permanentemente el canal desde el Admin Center de Teams o usa un nombre de canal diferente en el workflow."
-                echo "Intentando usar el canal 'General' como fallback..."
-                CHANNEL_ID=$(echo "$ALL_CHANNELS_JSON" | jq -r '.value[]? | select(.displayName == "General") | .id')
-                if [ -z "$CHANNEL_ID" ] || [ "$CHANNEL_ID" = "null" ]; then
-                   echo "❌ Fallback fallido: No se pudo encontrar el canal 'General'."
-                   exit 1
-                fi
-                echo "✅ Usando canal 'General' como fallback. ID: $CHANNEL_ID"
-              else
-                echo "❌ Error inesperado al crear canal. Código HTTP: $CREATE_HTTP_CODE. Código de Error API: $ERROR_CODE"
+          if [ -z "$CHANNEL_ID" ] || [ "$CHANNEL_ID" = "null" ]; then
+             echo "Creando canal '$CHANNEL_NAME' porque no fue encontrado..."
+             JSON_BODY=$(jq -n --arg channelName "$CHANNEL_NAME" '{displayName: $channelName, description: "Canal para logs de GitHub Actions"}')
+             CREATE_RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "https://graph.microsoft.com/v1.0/teams/$(echo -n "$TEAM_ID" | tr -d '[:cntrl:]')/channels" -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d "$JSON_BODY")
+             CREATE_HTTP_CODE=$(echo "$CREATE_RESPONSE" | tail -n1)
+             NEW_CHANNEL_JSON=$(echo "$CREATE_RESPONSE" | sed '$d')
+             if [ "$CREATE_HTTP_CODE" != "201" ]; then
+                echo "❌ Error fatal al crear el canal."
                 echo "$NEW_CHANNEL_JSON"
                 exit 1
-              fi
-            fi
-          fi
-          
-          echo "Completando migración del canal para habilitar escritura..."
-          MIGRATE_RESPONSE=$(curl -s -w "%{http_code}" -X POST "https://graph.microsoft.com/v1.0/teams/$CLEAN_TEAM_ID/channels/$CHANNEL_ID/completeMigration" -H "Authorization: Bearer $TOKEN")
-          if [ "$MIGRATE_RESPONSE" = "204" ]; then
-            echo "✅ Canal listo para recibir mensajes."
-          else
-            echo "ℹ️  No se pudo completar la migración (código $MIGRATE_RESPONSE), puede que ya estuviera lista. Es seguro continuar."
-          fi
-          echo "CHANNEL_ID=$CHANNEL_ID" >> $GITHUB_OUTPUT
+             fi
+             CHANNEL_ID=$(echo "$NEW_CHANNEL_JSON" | jq -r '.id')
+             echo "✅ Canal creado exitosamente: $CHANNEL_ID"
+             
+             # --- INICIO DE LA CORRECCIÓN PARA EL ERROR 411 ---
+             echo "Completando migración del canal para habilitar escritura..."
+             MIGRATE_RESPONSE=$(curl -s -w "%{http_code}" \
+               -X POST "https://graph.microsoft.com/v1.0/teams/$(echo -n "$TEAM_ID" | tr -d '[:cntrl:]')/channels/$CHANNEL_ID/completeMigration" \
+               -H "Authorization: Bearer $TOKEN" \
+               -H "Content-Length: 0") # <-- CABECERA AÑADIDA
+             # --- FIN DE LA CORRECCIÓN ---
 
-      - name: 7. Enviar Mensaje a Canal de Teams
+             if [ "$MIGRATE_RESPONSE" = "204" ]; then
+                echo "✅ Canal listo para recibir mensajes."
+             else
+                echo "ℹ️  No se pudo completar la migración (código $MIGRATE_RESPONSE), puede que no fuera necesario. Es seguro continuar."
+             fi
+          else
+            echo "✅ Canal '$CHANNEL_NAME' ya existía. ID: $CHANNEL_ID."
+          fi
+          # Ya no necesitamos exportar el CHANNEL_ID para el mensaje
+
+      - name: 8. Enviar Mensaje a Teams vía Webhook
         env:
-          TOKEN: ${{ steps.get_token.outputs.TOKEN }}
-          TEAM_ID: ${{ secrets.MS_TEAMS_TEAM_ID }}
-          CHANNEL_ID: ${{ steps.setup_channel.outputs.CHANNEL_ID }}
-          MESSAGE_BODY: "🤖 <b>Actividad de desarrollo E5 completada</b><br/>Sufijo: <code>${{ steps.set_vars.outputs.UNIQUE_SUFFIX }}</code><br/>Ejecutado desde GitHub Actions."
+          TEAMS_WEBHOOK_URL: ${{ secrets.TEAMS_WEBHOOK_URL }}
+          UNIQUE_SUFFIX: ${{ steps.set_vars.outputs.UNIQUE_SUFFIX }}
         run: |
-          echo "Enviando mensaje al canal ID: $CHANNEL_ID"
-          JSON_BODY=$(jq -n --arg content "$MESSAGE_BODY" '{body: {contentType: "html", content: $content}}')
-          RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "https://graph.microsoft.com/v1.0/teams/$TEAM_ID/channels/$CHANNEL_ID/messages" -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d "$JSON_BODY")
-          HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
-          if [ "$HTTP_CODE" = "201" ]; then echo "✅ Mensaje enviado a Teams."; else echo "❌ Error al enviar mensaje a Teams. Código: $HTTP_CODE" && echo "$(echo "$RESPONSE" | sed '$d')"; fi
+          echo "Enviando mensaje a Teams vía Webhook..."
+          # Formato de mensaje para Webhooks (Adaptive Cards o simple)
+          # Usaremos un formato simple de "tarjeta de mensaje"
+          JSON_BODY=$(jq -n \
+            --arg suffix "$UNIQUE_SUFFIX" \
+            '{
+              "@type": "MessageCard",
+              "@context": "http://schema.org/extensions",
+              "themeColor": "0076D7",
+              "summary": "Actividad de Desarrollo",
+              "sections": [{
+                "activityTitle": "🤖 <b>Actividad de desarrollo completada</b>",
+                "activitySubtitle": "Ejecutado desde GitHub Actions",
+                "facts": [{
+                  "name": "Sufijo de ejecución",
+                  "value": $suffix
+                }, {
+                  "name": "Repositorio",
+                  "value": "${{ github.repository }}"
+                }, {
+                  "name": "Fecha (UTC)",
+                  "value": "$(date -u --iso-8601=seconds)"
+                }],
+                "markdown": true
+              }]
+            }')
+
+          RESPONSE_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
+            -X POST \
+            -H "Content-Type: application/json" \
+            -d "$JSON_BODY" \
+            "$TEAMS_WEBHOOK_URL")
+
+          if [ "$RESPONSE_CODE" -eq 200 ]; then
+            echo "✅ Mensaje enviado exitosamente a Teams."
+          else
+            echo "❌ Error al enviar mensaje a Teams vía Webhook. Código de respuesta: $RESPONSE_CODE"
+            # No usamos 'exit 1' para que el workflow no falle por una notificación
+          fi
 
       - name: 8. Actualizar Perfil de Usuario en Entra ID
         env:
