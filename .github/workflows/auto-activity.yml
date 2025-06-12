@@ -37,7 +37,7 @@ jobs:
           echo "Token de acceso para Graph obtenido exitosamente."
 
       # --- INICIO DE LA NUEVA LÓGICA INTELIGENTE ---
-      - name: 5. Asegurar que el canal de logs existe (CAPTURA DE ERROR MEJORADA)
+      - name: 5. Asegurar que el canal de logs existe (SOLUCIÓN FINAL)
         id: setup_channel
         env:
           TOKEN: ${{ steps.get_token.outputs.TOKEN }}
@@ -45,12 +45,12 @@ jobs:
           CHANNEL_NAME: "GitHub-Logs-Migracion"
         run: |
           CLEAN_TEAM_ID=$(echo -n "${{ env.TEAM_ID }}" | tr -d '[:cntrl:]')
-          echo "Obteniendo TODOS los canales del equipo para buscar localmente..."
           
+          echo "Obteniendo TODOS los canales del equipo para buscar localmente..."
           ALL_CHANNELS_JSON=$(curl -s -f -X GET "https://graph.microsoft.com/v1.0/teams/$CLEAN_TEAM_ID/channels" -H "Authorization: Bearer $TOKEN")
           
           if [ $? -ne 0 ]; then
-            echo "Error crítico: No se pudo obtener la lista de canales del equipo. Revisa el TEAM_ID y los permisos."
+            echo "Error crítico: No se pudo obtener la lista de canales del equipo."
             exit 1
           fi
 
@@ -60,15 +60,27 @@ jobs:
             echo "Canal encontrado con ID: $CHANNEL_ID"
           else
             echo "Canal no encontrado. Creándolo en modo migración..."
-            JSON_BODY=$(jq -n --arg channelName "$CHANNEL_NAME" '{displayName: $channelName, description: "Canal autogenerado para logs de GitHub Actions.", "@microsoft.graph.channelCreationMode": "migration"}')
             
-            # --- INICIO DEL CAMBIO IMPORTANTE PARA DEPURACIÓN ---
-            # Modificamos cómo llamamos a curl para capturar la respuesta incluso si falla.
+            # --- INICIO DE LA CORRECCIÓN FINAL ---
+            # Generamos la fecha y hora actual en el formato que la API requiere (ISO 8601 UTC)
+            TIMESTAMP=$(date -u --iso-8601=seconds)
+            
+            # Añadimos el campo 'createdDateTime' al cuerpo de la solicitud
+            JSON_BODY=$(jq -n \
+              --arg channelName "$CHANNEL_NAME" \
+              --arg creationTime "$TIMESTAMP" \
+              '{
+                displayName: $channelName,
+                description: "Canal autogenerado para logs de GitHub Actions.",
+                "@microsoft.graph.channelCreationMode": "migration",
+                "createdDateTime": $creationTime
+              }')
+            # --- FIN DE LA CORRECCIÓN FINAL ---
+            
             RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "https://graph.microsoft.com/v1.0/teams/$CLEAN_TEAM_ID/channels" -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d "$JSON_BODY")
             HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
             BODY=$(echo "$RESPONSE" | sed '$d')
             
-            # Comprobamos el código de respuesta y mostramos el error si no es 201 (Creado)
             if [ "$HTTP_CODE" -eq 201 ]; then
               CHANNEL_ID=$(echo "$BODY" | jq -r '.id')
               echo "Canal creado exitosamente con el nuevo ID: $CHANNEL_ID"
@@ -77,7 +89,6 @@ jobs:
               echo "Respuesta del Servidor: $BODY"
               exit 1
             fi
-            # --- FIN DEL CAMBIO IMPORTANTE PARA DEPURACIÓN ---
           fi
           
           echo "CHANNEL_ID=$CHANNEL_ID" >> $GITHUB_OUTPUT
