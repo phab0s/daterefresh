@@ -107,37 +107,45 @@ jobs:
           UNIQUE_SUFFIX: ${{ steps.set_vars.outputs.UNIQUE_SUFFIX }}
         run: |
           echo "Enviando mensaje a Teams vía Webhook..."
-          
-          # --- INICIO DE LA CORRECCIÓN PARA LA FECHA ---
-          CURRENT_DATE_UTC=$(date -u --iso-8601=seconds)
-          JSON_BODY=$(jq -n \
-            --arg suffix "$UNIQUE_SUFFIX" \
-            --arg repo "${{ github.repository }}" \
-            --arg date_utc "$CURRENT_DATE_UTC" \
-          # --- FIN DE LA CORRECCIÓN ---
-            '{
-              "@type": "MessageCard",
-              "@context": "http://schema.org/extensions",
-              "themeColor": "0076D7",
-              "summary": "Actividad de Desarrollo E5",
-              "sections": [{
-                "activityTitle": "🤖 <b>Actividad de desarrollo completada</b>",
-                "activitySubtitle": "Ejecutado desde GitHub Actions",
-                "facts": [{
-                  "name": "Sufijo de ejecución",
-                  "value": $suffix
-                }, {
-                  "name": "Repositorio",
-                  "value": $repo
-                }, {
-                  "name": "Fecha (UTC)",
-                  "value": $date_utc
-                }],
-                "markdown": true
-              }]
-            }')
 
-          RESPONSE_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST -H "Content-Type: application/json" -d "$JSON_BODY" "$TEAMS_WEBHOOK_URL")
+          # Construir el cuerpo JSON de forma segura usando jq
+          # Se han eliminado los comentarios intermedios y las continuaciones de línea innecesarias para mayor robustez.
+          JSON_BODY=$(jq -n \
+                        --arg suffix "$UNIQUE_SUFFIX" \
+                        --arg repo "${{ github.repository }}" \
+                        --arg date_utc "$(date -u --iso-8601=seconds)" \
+                        '{
+                          "@type": "MessageCard",
+                          "@context": "http://schema.org/extensions",
+                          "themeColor": "0076D7",
+                          "summary": "Actividad de Desarrollo E5",
+                          "sections": [{
+                            "activityTitle": "🤖 <b>Actividad de desarrollo completada</b>",
+                            "activitySubtitle": "Ejecutado desde GitHub Actions",
+                            "facts": [{
+                              "name": "Sufijo de ejecución",
+                              "value": $suffix
+                            }, {
+                              "name": "Repositorio",
+                              "value": $repo
+                            }, {
+                              "name": "Fecha (UTC)",
+                              "value": $date_utc
+                            }],
+                            "markdown": true
+                          }]
+                        }')
+          
+          # Paso de depuración: Imprime el JSON que se va a enviar
+          echo "JSON Payload a enviar:"
+          echo "$JSON_BODY"
+
+          # Enviar la petición a Teams
+          RESPONSE_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
+            -X POST \
+            -H "Content-Type: application/json" \
+            -d "$JSON_BODY" \
+            "${{ secrets.TEAMS_WEBHOOK_URL }}")
 
           if [ "$RESPONSE_CODE" -eq 200 ]; then
             echo "✅ Mensaje enviado exitosamente a Teams."
