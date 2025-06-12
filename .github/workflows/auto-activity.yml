@@ -37,34 +37,37 @@ jobs:
           echo "Token de acceso para Graph obtenido exitosamente."
 
       # --- INICIO DE LA NUEVA LÓGICA INTELIGENTE ---
-      - name: 5. Asegurar que el canal de logs existe (CON LIMPIEZA)
+      - name: 5. Asegurar que el canal de logs existe (ENFOQUE FINAL SIN FILTRO)
         id: setup_channel
         env:
           TOKEN: ${{ steps.get_token.outputs.TOKEN }}
           TEAM_ID: ${{ secrets.MS_TEAMS_TEAM_ID }}
           CHANNEL_NAME: "GitHub-Logs-Migracion"
         run: |
-          # --- INICIO DE LA CORRECCIÓN DEFINITIVA ---
-          # Limpiamos la variable TEAM_ID para eliminar posibles caracteres invisibles (\r, \n)
+          # Como medida de seguridad final, siempre limpiamos la variable TEAM_ID
           CLEAN_TEAM_ID=$(echo -n "${{ env.TEAM_ID }}" | tr -d '[:cntrl:]')
-          echo "ID de equipo depurado para la URL: [$CLEAN_TEAM_ID]"
-          # --- FIN DE LA CORRECCIÓN DEFINITIVA ---
+          
+          echo "Obteniendo TODOS los canales del equipo para buscar localmente..."
+          
+          # --- CAMBIO DE ESTRATEGIA ---
+          # Paso 1: Pedimos la lista completa de canales. La URL es simple y a prueba de errores.
+          ALL_CHANNELS_JSON=$(curl -s -f -X GET "https://graph.microsoft.com/v1.0/teams/$CLEAN_TEAM_ID/channels" -H "Authorization: Bearer $TOKEN")
+          
+          if [ $? -ne 0 ]; then
+            echo "Error crítico: No se pudo obtener la lista de canales del equipo."
+            echo "Asegúrate de que el TEAM_ID es correcto y la app tiene los permisos necesarios (Channel.ReadBasic.All, etc.)."
+            exit 1
+          fi
 
-          echo "Buscando si el canal '$CHANNEL_NAME' ya existe..."
-          
-          # Usamos la variable depurada para construir la URL
-          FINAL_URL="https://graph.microsoft.com/v1.0/teams/$CLEAN_TEAM_ID/channels?\$filter=displayName eq '$CHANNEL_NAME'"
-          
-          CHANNELS_JSON=$(curl -s -f -X GET "$FINAL_URL" -H "Authorization: Bearer $TOKEN")
-          
-          CHANNEL_ID=$(echo $CHANNELS_JSON | jq -r '.value[0].id')
+          # Paso 2: Usamos jq para buscar en la respuesta JSON el canal que queremos por su nombre.
+          CHANNEL_ID=$(echo "$ALL_CHANNELS_JSON" | jq -r --arg chanName "$CHANNEL_NAME" '.value[] | select(.displayName == $chanName) | .id')
 
+          # El resto de la lógica para crear el canal si no se encuentra sigue siendo la misma.
           if [ -n "$CHANNEL_ID" ] && [ "$CHANNEL_ID" != "null" ]; then
             echo "Canal encontrado con ID: $CHANNEL_ID"
           else
             echo "Canal no encontrado. Creándolo en modo migración..."
             JSON_BODY=$(jq -n --arg channelName "$CHANNEL_NAME" '{displayName: $channelName, description: "Canal autogenerado para logs de GitHub Actions.", "@microsoft.graph.channelCreationMode": "migration"}')
-            # Usamos la variable depurada también aquí
             NEW_CHANNEL_JSON=$(curl -s -f -X POST "https://graph.microsoft.com/v1.0/teams/$CLEAN_TEAM_ID/channels" -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d "$JSON_BODY")
             
             if [ $? -ne 0 ]; then
@@ -73,7 +76,7 @@ jobs:
               exit 1
             fi
 
-            CHANNEL_ID=$(echo $NEW_CHANNEL_JSON | jq -r '.id')
+            CHANNEL_ID=$(echo "$NEW_CHANNEL_JSON" | jq -r '.id')
             echo "Canal creado exitosamente con el nuevo ID: $CHANNEL_ID"
           fi
           
