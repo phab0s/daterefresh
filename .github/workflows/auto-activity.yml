@@ -37,61 +37,130 @@ jobs:
           echo "Token de acceso para Graph obtenido exitosamente."
 
       # --- INICIO DE LA NUEVA LÓGICA INTELIGENTE ---
-      - name: 5. Asegurar que el canal de logs existe (SOLUCIÓN FINAL)
+      - name: 5. Asegurar que el canal de logs existe (VERSIÓN CORREGIDA)
         id: setup_channel
-        env:
-          TOKEN: ${{ steps.get_token.outputs.TOKEN }}
-          TEAM_ID: ${{ secrets.MS_TEAMS_TEAM_ID }}
-          CHANNEL_NAME: "GitHub-Logs-Migracion"
-        run: |
-          CLEAN_TEAM_ID=$(echo -n "${{ env.TEAM_ID }}" | tr -d '[:cntrl:]')
-          
-          echo "Obteniendo TODOS los canales del equipo para buscar localmente..."
-          ALL_CHANNELS_JSON=$(curl -s -f -X GET "https://graph.microsoft.com/v1.0/teams/$CLEAN_TEAM_ID/channels" -H "Authorization: Bearer $TOKEN")
-          
-          if [ $? -ne 0 ]; then
-            echo "Error crítico: No se pudo obtener la lista de canales del equipo."
-            exit 1
-          fi
-
-          CHANNEL_ID=$(echo "$ALL_CHANNELS_JSON" | jq -r --arg chanName "$CHANNEL_NAME" '.value[] | select(.displayName == $chanName) | .id')
-
-          if [ -n "$CHANNEL_ID" ] && [ "$CHANNEL_ID" != "null" ]; then
-            echo "Canal encontrado con ID: $CHANNEL_ID"
-          else
-            echo "Canal no encontrado. Creándolo en modo migración..."
-            
-            # --- INICIO DE LA CORRECCIÓN FINAL ---
-            # Generamos la fecha y hora actual en el formato que la API requiere (ISO 8601 UTC)
-            TIMESTAMP=$(date -u --iso-8601=seconds)
-            
-            # Añadimos el campo 'createdDateTime' al cuerpo de la solicitud
-            JSON_BODY=$(jq -n \
-              --arg channelName "$CHANNEL_NAME" \
-              --arg creationTime "$TIMESTAMP" \
-              '{
-                displayName: $channelName,
-                description: "Canal autogenerado para logs de GitHub Actions.",
-                "@microsoft.graph.channelCreationMode": "migration",
-                "createdDateTime": $creationTime
-              }')
-            # --- FIN DE LA CORRECCIÓN FINAL ---
-            
-            RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "https://graph.microsoft.com/v1.0/teams/$CLEAN_TEAM_ID/channels" -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d "$JSON_BODY")
-            HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
-            BODY=$(echo "$RESPONSE" | sed '$d')
-            
-            if [ "$HTTP_CODE" -eq 201 ]; then
-              CHANNEL_ID=$(echo "$BODY" | jq -r '.id')
-              echo "Canal creado exitosamente con el nuevo ID: $CHANNEL_ID"
-            else
-              echo "Error crítico al crear el canal. Código HTTP: $HTTP_CODE"
-              echo "Respuesta del Servidor: $BODY"
+          env:
+            TOKEN: ${{ steps.get_token.outputs.TOKEN }}
+            TEAM_ID: ${{ secrets.MS_TEAMS_TEAM_ID }}
+            CHANNEL_NAME: "GitHub-Logs-Migracion"
+          run: |
+            # Limpiar la variable TEAM_ID
+            CLEAN_TEAM_ID=$(echo -n "$TEAM_ID" | tr -d '[:cntrl:]')
+    
+            echo "Verificando permisos y obteniendo canales del equipo..."
+            echo "Team ID (primeros 8 caracteres): ${CLEAN_TEAM_ID:0:8}..."
+    
+            # Paso 1: Obtener lista de canales con mejor manejo de errores
+            echo "Realizando petición GET a Microsoft Graph..."
+            RESPONSE=$(curl -s -w "\nHTTP_CODE:%{http_code}\nHTTP_SIZE:%{size_download}" \
+              -X GET "https://graph.microsoft.com/v1.0/teams/$CLEAN_TEAM_ID/channels" \
+              -H "Authorization: Bearer $TOKEN" \
+              -H "Accept: application/json")
+    
+            # Extraer código HTTP y contenido
+            HTTP_CODE=$(echo "$RESPONSE" | grep "HTTP_CODE:" | cut -d: -f2)
+            HTTP_SIZE=$(echo "$RESPONSE" | grep "HTTP_SIZE:" | cut -d: -f2)
+            ALL_CHANNELS_JSON=$(echo "$RESPONSE" | sed '/HTTP_CODE:/d' | sed '/HTTP_SIZE:/d')
+    
+            echo "Código de respuesta HTTP: $HTTP_CODE"
+            echo "Tamaño de respuesta: $HTTP_SIZE bytes"
+    
+            # Verificar si la petición fue exitosa
+            if [ "$HTTP_CODE" != "200" ]; then
+              echo "ERROR: La petición falló con código $HTTP_CODE"
+              echo "Respuesta completa:"
+              echo "$ALL_CHANNELS_JSON"
+      
+              # Mostrar posibles causas del error
+              case $HTTP_CODE in
+                401)
+                  echo "CAUSA: Token de autenticación inválido o expirado"
+                  echo "SOLUCIÓN: Verificar que el token tenga los permisos correctos"
+                  ;;
+                403)
+                  echo "CAUSA: Permisos insuficientes"
+                  echo "SOLUCIÓN: La aplicación necesita los permisos: Channel.ReadBasic.All, Channel.Create"
+                  ;;
+                404)
+                  echo "CAUSA: Team ID no encontrado o incorrecto"
+                  echo "SOLUCIÓN: Verificar que MS_TEAMS_TEAM_ID sea correcto"
+                  ;;
+                *)
+                  echo "CAUSA: Error HTTP $HTTP_CODE - revisar documentación de Microsoft Graph"
+                  ;;
+              esac
               exit 1
             fi
-          fi
-          
-          echo "CHANNEL_ID=$CHANNEL_ID" >> $GITHUB_OUTPUT
+    
+            # Verificar que jq esté disponible
+            if ! command -v jq &> /dev/null; then
+              echo "ERROR: jq no está instalado en el runner"
+              exit 1
+            fi
+    
+            # Verificar que la respuesta sea JSON válido
+            if ! echo "$ALL_CHANNELS_JSON" | jq empty 2>/dev/null; then
+              echo "ERROR: La respuesta no es JSON válido"
+              echo "Respuesta recibida:"
+              echo "$ALL_CHANNELS_JSON"
+              exit 1
+            fi
+    
+            echo "Respuesta JSON válida recibida. Buscando canal..."
+    
+            # Paso 2: Buscar el canal por nombre
+            CHANNEL_ID=$(echo "$ALL_CHANNELS_JSON" | jq -r --arg chanName "$CHANNEL_NAME" '.value[]? | select(.displayName == $chanName) | .id')
+    
+            if [ -n "$CHANNEL_ID" ] && [ "$CHANNEL_ID" != "null" ]; then
+              echo "✅ Canal encontrado con ID: $CHANNEL_ID"
+              echo "CHANNEL_ID=$CHANNEL_ID" >> $GITHUB_OUTPUT
+            else
+              echo "Canal no encontrado. Intentando crear..."
+      
+              # Crear el canal sin modo migración (causa problemas)
+              JSON_BODY=$(jq -n --arg channelName "$CHANNEL_NAME" \
+                '{
+                  displayName: $channelName,
+                  description: "Canal autogenerado para logs de GitHub Actions.",
+                  membershipType: "standard"
+                }')
+      
+              echo "JSON para crear canal:"
+              echo "$JSON_BODY"
+      
+              CREATE_RESPONSE=$(curl -s -w "\nHTTP_CODE:%{http_code}" \
+                -X POST "https://graph.microsoft.com/v1.0/teams/$CLEAN_TEAM_ID/channels" \
+                -H "Authorization: Bearer $TOKEN" \
+                -H "Content-Type: application/json" \
+                -d "$JSON_BODY")
+      
+              CREATE_HTTP_CODE=$(echo "$CREATE_RESPONSE" | grep "HTTP_CODE:" | cut -d: -f2)
+              NEW_CHANNEL_JSON=$(echo "$CREATE_RESPONSE" | sed '/HTTP_CODE:/d')
+      
+              echo "Código de respuesta para creación: $CREATE_HTTP_CODE"
+      
+              if [ "$CREATE_HTTP_CODE" != "201" ]; then
+                echo "ERROR: No se pudo crear el canal. Código: $CREATE_HTTP_CODE"
+                echo "Respuesta:"
+                echo "$NEW_CHANNEL_JSON"
+        
+                # Intentar usar un canal existente como fallback
+                echo "Buscando canal 'General' como alternativa..."
+                CHANNEL_ID=$(echo "$ALL_CHANNELS_JSON" | jq -r '.value[]? | select(.displayName == "General") | .id')
+        
+                if [ -n "$CHANNEL_ID" ] && [ "$CHANNEL_ID" != "null" ]; then
+                  echo "⚠️  Usando canal 'General' como alternativa: $CHANNEL_ID"
+                  echo "CHANNEL_ID=$CHANNEL_ID" >> $GITHUB_OUTPUT
+                else
+                  echo "No se pudo encontrar ningún canal disponible"
+                  exit 1
+                fi
+              else
+                CHANNEL_ID=$(echo "$NEW_CHANNEL_JSON" | jq -r '.id')
+                echo "✅ Canal creado exitosamente con ID: $CHANNEL_ID"
+                echo "CHANNEL_ID=$CHANNEL_ID" >> $GITHUB_OUTPUT
+              fi
+            fi
       # --- FIN DE LA NUEVA LÓGICA INTELIGENTE ---
 
       - name: 6. Configurar variables dinámicas
