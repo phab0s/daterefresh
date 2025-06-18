@@ -160,7 +160,7 @@ jobs:
           UNIQUE_SUFFIX: ${{ steps.set_vars.outputs.UNIQUE_SUFFIX }}
         run: |
           # Cambiamos 'aboutMe' por 'jobTitle' para la prueba
-          JSON_BODY=$(jq -n --arg jobTitle "Prueba de API - $UNIQUE_SUFFIX" '{jobTitle: $jobTitle}')
+          JSON_BODY=$(jq -n --arg aboutMe "Última ejecución de actividad E5: $UNIQUE_SUFFIX" '{aboutMe: $aboutMe}')
           
           echo "Intentando actualizar el campo 'jobTitle'..."
           RESPONSE=$(curl -s -w "\n%{http_code}" -X PATCH "https://graph.microsoft.com/v1.0/users/$USER_EMAIL" -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d "$JSON_BODY")
