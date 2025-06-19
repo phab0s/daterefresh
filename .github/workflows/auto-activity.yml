@@ -153,22 +153,18 @@ jobs:
             echo "❌ Error al enviar mensaje a Teams vía Webhook. Código de respuesta: $RESPONSE_CODE"
           fi
 
-      - name: 8. Actualizar Perfil de Usuario en Entra ID (PRUEBA DE DIAGNÓSTICO)
-        env:
-          TOKEN: ${{ steps.get_token.outputs.TOKEN }}
-          USER_EMAIL: ${{ secrets.MS_GRAPH_USER_EMAIL }}
-          UNIQUE_SUFFIX: ${{ steps.set_vars.outputs.UNIQUE_SUFFIX }}
-        run: |
-          # Cambiamos 'aboutMe' por 'jobTitle' para la prueba
-          JSON_BODY=$(jq -n --arg aboutMe "Última ejecución de actividad E5: $UNIQUE_SUFFIX" '{aboutMe: $aboutMe}')
-          
-          echo "Intentando actualizar el campo 'jobTitle'..."
-          RESPONSE=$(curl -s -w "\n%{http_code}" -X PATCH "https://graph.microsoft.com/v1.0/users/$USER_EMAIL" -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d "$JSON_BODY")
-          
-          if [ "$(echo "$RESPONSE" | tail -n1)" -ne 204 ]; then 
-            echo "Error al actualizar el perfil: $(echo "$RESPONSE" | sed '$d')" && exit 1
-          fi
-          echo "✅ Perfil de usuario actualizado exitosamente."
+      #      - name: 8. Actualizar Perfil de Usuario en Entra ID (PRUEBA DE DIAGNÓSTICO)
+#        env:
+#          TOKEN: ${{ steps.get_token.outputs.TOKEN }}
+#          USER_EMAIL: ${{ secrets.MS_GRAPH_USER_EMAIL }}
+#          UNIQUE_SUFFIX: ${{ steps.set_vars.outputs.UNIQUE_SUFFIX }}
+#        run: |
+#          # Cambiamos 'aboutMe' por 'jobTitle' para la prueba
+#          echo "Intentando actualizar el campo 'jobTitle'..."
+#          JSON_BODY=$(jq -n --arg jobTitle "Actividad E5: $UNIQUE_SUFFIX" '{jobTitle: $jobTitle}')
+#          RESPONSE=$(curl -s -w "\n%{http_code}" -X PATCH "https://graph.microsoft.com/v1.0/users/$USER_EMAIL" -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d "$JSON_BODY")
+#          if [ "$(echo "$RESPONSE" | tail -n1)" -ne 204 ]; then echo "Error al actualizar el perfil: $(echo "$RESPONSE" | sed '$d')" && exit 1; fi
+#          echo "✅ Perfil de usuario actualizado exitosamente."
 
       - name: 9. Subir archivo a SharePoint
         env:
