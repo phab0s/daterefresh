@@ -210,21 +210,94 @@ jobs:
           echo "✅ Evento de calendario creado. ID: $EVENT_ID"
           echo "OUTLOOK_EVENT_ID=$EVENT_ID" >> $GITHUB_OUTPUT
 
-      - name: 12. Crear documento en OneDrive
-        id: create_onedrive_file
+      - name: 12. Ciclo CRUD en OneDrive para Actividad de API
         env:
           TOKEN: ${{ steps.get_token.outputs.TOKEN }}
           USER_EMAIL: ${{ secrets.MS_GRAPH_USER_EMAIL }}
           UNIQUE_SUFFIX: ${{ steps.set_vars.outputs.UNIQUE_SUFFIX }}
         run: |
-          CONTENT="Reporte de Actividad E5\nFecha: $(date)"
-          RESPONSE=$(curl -s -w "\n%{http_code}" -X PUT "https://graph.microsoft.com/v1.0/users/$USER_EMAIL/drive/root:/Reportes/actividad-$UNIQUE_SUFFIX.txt:/content" -H "Authorization: Bearer $TOKEN" -H "Content-Type: text/plain" --data-raw "$CONTENT")
-          HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
-          BODY=$(echo "$RESPONSE" | sed '$d')
-          if [ "$HTTP_CODE" -ne 201 ] && [ "$HTTP_CODE" -ne 200 ]; then echo "Error al crear documento en OneDrive. Código: $HTTP_CODE, Respuesta: $BODY" && exit 1; fi
-          FILE_ID=$(echo "$BODY" | jq -r '.id')
-          echo "✅ Documento creado en OneDrive. ID: $FILE_ID"
-          echo "ONEDRIVE_FILE_ID=$FILE_ID" >> $GITHUB_OUTPUT
+          # Opciones de shell para depuración y seguridad
+          # set -e: Salir inmediatamente si un comando falla.
+          # set -x: Imprimir cada comando antes de ejecutarlo (excelente para logs).
+          set -ex
+
+          FILE_NAME="actividad-e5-${UNIQUE_SUFFIX}.txt"
+          FILE_PATH_URL="https://graph.microsoft.com/v1.0/users/$USER_EMAIL/drive/root:/GitHub-Actions-Logs/$FILE_NAME"
+          
+          # --- 1. CREAR (Create) ---
+          echo "✅ 1. Creando archivo en OneDrive..."
+          CONTENT_V1="Reporte de Actividad E5\nFecha de creación: $(date)"
+          CREATE_RESPONSE=$(curl -s -w "\n%{http_code}" \
+            -X PUT "$FILE_PATH_URL:/content" \
+            -H "Authorization: Bearer $TOKEN" \
+            -H "Content-Type: text/plain" \
+            --data-raw "$CONTENT_V1")
+          
+          CREATE_HTTP_CODE=$(echo "$CREATE_RESPONSE" | tail -n1)
+          CREATE_BODY=$(echo "$CREATE_RESPONSE" | sed '$d')
+
+          if [ "$CREATE_HTTP_CODE" -ne 201 ] && [ "$CREATE_HTTP_CODE" -ne 200 ]; then
+            echo "❌ Error al crear el archivo. Código: $CREATE_HTTP_CODE"
+            echo "$CREATE_BODY"
+            exit 1
+          fi
+          
+          # Extraer el ID del archivo creado para los siguientes pasos
+          FILE_ID=$(echo "$CREATE_BODY" | jq -r '.id')
+          echo "Archivo creado con éxito. ID: $FILE_ID"
+
+          # Pequeña pausa para asegurar que el archivo esté listo para las siguientes operaciones
+          sleep 5
+
+          # --- 2. LEER (Read) ---
+          echo "✅ 2. Leyendo el contenido del archivo..."
+          READ_CONTENT=$(curl -s -f -L \
+            -H "Authorization: Bearer $TOKEN" \
+            "https://graph.microsoft.com/v1.0/users/$USER_EMAIL/drive/items/$FILE_ID/content")
+          
+          if [ $? -ne 0 ]; then
+            echo "❌ Error al leer el contenido del archivo."
+            # Aún así, intentaremos borrarlo en el paso final
+          else
+            echo "Contenido leído exitosamente: $READ_CONTENT"
+          fi
+
+          # --- 3. ACTUALIZAR (Update) ---
+          echo "✅ 3. Actualizando el contenido del archivo..."
+          CONTENT_V2="$READ_CONTENT\nContenido actualizado: $(date)"
+          UPDATE_RESPONSE=$(curl -s -w "\n%{http_code}" \
+            -X PUT "$FILE_PATH_URL:/content" \
+            -H "Authorization: Bearer $TOKEN" \
+            -H "Content-Type: text/plain" \
+            --data-raw "$CONTENT_V2")
+
+          UPDATE_HTTP_CODE=$(echo "$UPDATE_RESPONSE" | tail -n1)
+          if [ "$UPDATE_HTTP_CODE" -ne 201 ] && [ "$UPDATE_HTTP_CODE" -ne 200 ]; then
+            echo "❌ Error al actualizar el archivo. Código: $UPDATE_HTTP_CODE"
+            echo "$(echo "$UPDATE_RESPONSE" | sed '$d')"
+          else
+            echo "Archivo actualizado exitosamente."
+          fi
+
+          sleep 5
+
+          # --- 4. BORRAR (Delete) ---
+          # Se ejecuta siempre para limpiar, incluso si un paso intermedio falló
+          if [ -n "$FILE_ID" ]; then
+            echo "✅ 4. Limpiando (borrando) el archivo creado..."
+            DELETE_HTTP_CODE=$(curl -s -w "%{http_code}" -o /dev/null \
+              -X DELETE \
+              -H "Authorization: Bearer $TOKEN" \
+              "https://graph.microsoft.com/v1.0/users/$USER_EMAIL/drive/items/$FILE_ID")
+
+            if [ "$DELETE_HTTP_CODE" -ne 204 ]; then
+              echo "⚠️ No se pudo eliminar el archivo (Código: $DELETE_HTTP_CODE). Puede que necesites borrarlo manualmente."
+            else
+              echo "Archivo borrado exitosamente."
+            fi
+          fi
+
+          echo "🎉 Ciclo CRUD en OneDrive completado."
 
       - name: 13. Enviar correo con resumen
         env:
@@ -238,26 +311,7 @@ jobs:
           if [ "$(echo "$RESPONSE" | tail -n1)" -ne 202 ]; then echo "Error al enviar correo: $(echo "$RESPONSE" | sed '$d')" && exit 1; fi
           echo "✅ Correo de resumen enviado exitosamente."
 
-      - name: 14. Limpieza de recursos
-        if: always() # Siempre se ejecuta para limpiar, incluso si un paso anterior falla
-        env:
-          TOKEN: ${{ steps.get_token.outputs.TOKEN }}
-          USER_EMAIL: ${{ secrets.MS_GRAPH_USER_EMAIL }}
-          EVENT_ID: ${{ steps.create_calendar_event.outputs.OUTLOOK_EVENT_ID }}
-          ONEDRIVE_FILE_ID: ${{ steps.create_onedrive_file.outputs.ONEDRIVE_FILE_ID }}
-        run: |
-          echo "Iniciando limpieza de recursos generados..."
-          if [ -n "$EVENT_ID" ]; then
-            echo "Eliminando evento de calendario ID: $EVENT_ID"
-            curl -s -f -X DELETE "https://graph.microsoft.com/v1.0/users/$USER_EMAIL/events/$EVENT_ID" -H "Authorization: Bearer $TOKEN" || echo "No se pudo eliminar el evento de calendario."
-          fi
-          if [ -n "$ONEDRIVE_FILE_ID" ]; then
-            echo "Eliminando archivo de OneDrive ID: $ONEDRIVE_FILE_ID"
-            curl -s -f -X DELETE "https://graph.microsoft.com/v1.0/users/$USER_EMAIL/drive/items/$ONEDRIVE_FILE_ID" -H "Authorization: Bearer $TOKEN" || echo "No se pudo eliminar el archivo de OneDrive."
-          fi
-          echo "Limpieza completada."
-
-      - name: 15. Registrar fin de actividad y hacer commit
+      - name: 14. Registrar fin de actividad y hacer commit
         if: success()
         env:
           UNIQUE_SUFFIX: ${{ steps.set_vars.outputs.UNIQUE_SUFFIX }}
