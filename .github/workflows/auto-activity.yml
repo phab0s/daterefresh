@@ -46,6 +46,15 @@ jobs:
           echo "::add-mask::$TOKEN" # Mascarar el token en los logs
           echo "Token de acceso para Graph obtenido exitosamente."
 
+      - name: 5b. Obtener token de acceso para Dataverse
+        id: get_dataverse_token
+        run: |
+          DATAVERSE_URL="https://$(echo "${{ secrets.MS_GRAPH_USER_EMAIL }}" | cut -d'@' -f2 | cut -d'.' -f1).crm.dynamics.com" # Intenta adivinar la URL, ajústala si es necesario
+          TOKEN=$(az account get-access-token --resource $DATAVERSE_URL --query accessToken -o tsv)
+          echo "DATAVERSE_TOKEN=$TOKEN" >> $GITHUB_OUTPUT
+          echo "::add-mask::$TOKEN"
+          echo "Token de acceso para Dataverse obtenido."
+
       - name: 6. Asegurar que el canal de logs existe y es utilizable
         id: setup_channel
         env:
@@ -307,8 +316,38 @@ jobs:
           if [ "$(echo "$RESPONSE" | tail -n1)" -ne 202 ]; then echo "Error al enviar correo: $(echo "$RESPONSE" | sed '$d')" && exit 1; fi
           echo "✅ Correo de resumen enviado exitosamente."
 
-      - name: 14. Registrar fin de actividad y hacer commit
-        if: success()
+      - name: 14. Realizar operación en Dataverse
+        env:
+          # NOTA: Asegúrate de que el token sea para el recurso de Dataverse, no para Microsoft Graph.
+          TOKEN: ${{ steps.get_dataverse_token.outputs.DATAVERSE_TOKEN }} 
+          # Debes añadir esta URL como un secret en GitHub. Ej: https://tu-org.crm.dynamics.com
+          DATAVERSE_URL: ${{ secrets.DATAVERSE_URL }} 
+          UNIQUE_SUFFIX: ${{ steps.set_vars.outputs.UNIQUE_SUFFIX }}
+        run: |
+          echo "Realizando escritura en tabla de Dataverse para generar actividad..."
+          
+          # Este es un ejemplo para una tabla personalizada llamada 'new_activitylogs' 
+          # con una columna de texto principal llamada 'new_name'.
+          # Necesitarías crear esta tabla primero en tu entorno de Dataverse.
+          JSON_BODY=$(jq -n --arg log "Actividad desde GitHub Actions ${UNIQUE_SUFFIX}" '{"new_name": $log}')
+          
+          # Hacemos la llamada a la API de Dataverse para crear un nuevo registro
+          RESPONSE_CODE=$(curl -s -w "%{http_code}" -o /dev/null \
+            -X POST "$DATAVERSE_URL/api/data/v9.2/new_activitylogs" \
+            -H "Authorization: Bearer $TOKEN" \
+            -H "Content-Type: application/json" \
+            -d "$JSON_BODY")
+            
+          if [ "$RESPONSE_CODE" -eq 204 ]; then
+            echo "✅ Escritura en Dataverse completada exitosamente."
+          else
+            echo "❌ Error al escribir en Dataverse. Código de respuesta: $RESPONSE_CODE"
+            # Decidimos si el workflow debe fallar en este punto o solo advertir.
+            # exit 1 # Descomenta esta línea para que el workflow falle si la escritura en Dataverse no funciona.
+          fi
+
+      - name: 15. Registrar fin de actividad y hacer commit
+        if: always() # Usamos always() para que el log se registre incluso si un paso anterior falló (opcional)
         env:
           UNIQUE_SUFFIX: ${{ steps.set_vars.outputs.UNIQUE_SUFFIX }}
         run: |
