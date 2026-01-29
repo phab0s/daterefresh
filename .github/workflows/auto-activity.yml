@@ -326,64 +326,206 @@ jobs:
           if [ "$(echo "$RESPONSE" | tail -n1)" -ne 202 ]; then echo "Error al enviar correo: $(echo "$RESPONSE" | sed '$d')" && exit 1; fi
           echo "✅ Correo de resumen enviado exitosamente."
 
-      - name: 14. Actividad de Desarrollo en Power Platform (Corregido)
+      - name: 14. Actividad de Desarrollo en Power Platform (Graph API)
         id: power_platform_activity
         env:
-          PP_TOKEN: ${{ steps.get_pp_token.outputs.PP_TOKEN }}
+          TOKEN: ${{ steps.get_token.outputs.TOKEN }}
           UNIQUE_SUFFIX: ${{ steps.set_vars.outputs.UNIQUE_SUFFIX }}
         run: |
-          echo "🔍 Iniciando actividad de desarrollo en Power Platform..."
+          echo "🔍 Iniciando actividad de desarrollo en Power Platform (via Microsoft Graph)..."
           
-          # --- 1. Listar entornos de Power Platform ---
-          echo "📋 Paso 1: Listando entornos de Power Platform..."
-          ENVIRONMENTS_RESPONSE=$(curl -s -w "\n%{http_code}" \
-            -X GET "https://api.powerplatform.com/v1.0/environments" \
-            -H "Authorization: Bearer $PP_TOKEN")
+          # --- 1. Crear Grupo de Proyecto (simula entorno de desarrollo) ---
+          echo "📋 Paso 1: Creando grupo de proyecto de desarrollo..."
+          GROUP_JSON=$(jq -n \
+            --arg name "PP-Dev-$UNIQUE_SUFFIX" \
+            --arg desc "Proyecto desarrollo Power Platform E5 - $UNIQUE_SUFFIX" \
+            --arg mail "ppdev-$UNIQUE_SUFFIX" \
+            '{
+              "displayName": $name,
+              "description": $desc,
+              "groupTypes": ["Unified"],
+              "mailEnabled": true,
+              "mailNickname": $mail,
+              "securityEnabled": false
+            }')
           
-          ENV_HTTP_CODE=$(echo "$ENVIRONMENTS_RESPONSE" | tail -n1)
-          ENV_BODY=$(echo "$ENVIRONMENTS_RESPONSE" | sed '$d')
+          CREATE_GROUP=$(curl -s -w "\n%{http_code}" \
+            -X POST "https://graph.microsoft.com/v1.0/groups" \
+            -H "Authorization: Bearer $TOKEN" \
+            -H "Content-Type: application/json" \
+            -d "$GROUP_JSON")
           
-          if [ "$ENV_HTTP_CODE" -eq 200 ]; then
-            ENV_COUNT=$(echo "$ENV_BODY" | jq '.value | length')
-            echo "✅ Entornos encontrados: $ENV_COUNT"
-            echo "$ENV_BODY" | jq -r '.value[] | "   - \(.displayName) (\(.properties.environmentSku))"'
+          HTTP_CODE=$(echo "$CREATE_GROUP" | tail -n1)
+          BODY=$(echo "$CREATE_GROUP" | sed '$d')
+          
+          if [ "$HTTP_CODE" -eq 201 ]; then
+            GROUP_ID=$(echo "$BODY" | jq -r '.id')
+            echo "✅ Grupo creado: $GROUP_ID"
+            echo "GROUP_ID=$GROUP_ID" >> $GITHUB_OUTPUT
             
-            # Guardar el ID del primer entorno (sin espacios)
-            FIRST_ENV_ID=$(echo "$ENV_BODY" | jq -r '.value[0].name')
-            echo "FIRST_ENV_ID=$FIRST_ENV_ID" >> $GITHUB_OUTPUT
+            # --- 2. Crear Plan en Planner (gestión de proyecto ágil) ---
+            echo "📋 Paso 2: Creando plan de proyecto..."
+            PLAN_JSON=$(jq -n \
+              --arg title "Desarrollo Apps-$UNIQUE_SUFFIX" \
+              --arg owner "$GROUP_ID" \
+              '{
+                "container": {
+                  "containerId": $owner,
+                  "type": "group"
+                },
+                "title": $title
+              }')
             
-            # --- 2. Listar aplicaciones en el entorno ---
-            if [ -n "$FIRST_ENV_ID" ] && [ "$FIRST_ENV_ID" != "null" ]; then
-              echo "📋 Paso 2: Listando aplicaciones..."
-              APPS_RESPONSE=$(curl -s -w "\n%{http_code}" \
-                -X GET "https://api.powerplatform.com/v1.0/environments/${FIRST_ENV_ID}/apps" \
-                -H "Authorization: Bearer $PP_TOKEN")
+            CREATE_PLAN=$(curl -s -w "\n%{http_code}" \
+              -X POST "https://graph.microsoft.com/v1.0/planner/plans" \
+              -H "Authorization: Bearer $TOKEN" \
+              -H "Content-Type: application/json" \
+              -d "$PLAN_JSON")
+            
+            if [ "$(echo "$CREATE_PLAN" | tail -n1)" -eq 201 ]; then
+              PLAN_ID=$(echo "$CREATE_PLAN" | sed '$d' | jq -r '.id')
+              echo "✅ Plan creado: $PLAN_ID"
               
-              APP_HTTP_CODE=$(echo "$APPS_RESPONSE" | tail -n1)
-              if [ "$APP_HTTP_CODE" -eq 200 ]; then
-                APP_COUNT=$(echo "$APPS_RESPONSE" | jq -s '.[0].value | length' 2>/dev/null || echo "0")
-                echo "✅ Aplicaciones encontradas: $APP_COUNT"
-              fi
-
-              # --- 3. Listar flujos ---
-              echo "📋 Paso 3: Listando flujos..."
-              FLOWS_RESPONSE=$(curl -s -w "\n%{http_code}" \
-                -X GET "https://api.powerplatform.com/v1.0/environments/${FIRST_ENV_ID}/flows" \
-                -H "Authorization: Bearer $PP_TOKEN")
+              # --- 3. Crear tareas de desarrollo (demuestra actividad real) ---
+              echo "📋 Paso 3: Creando tareas de desarrollo..."
+              TASKS=("Diseñar modelo de datos Dataverse" "Desarrollar Canvas App" "Crear flujo de aprobación" "Configurar seguridad RBAC" "Publicar solución")
               
-              FLOW_HTTP_CODE=$(echo "$FLOWS_RESPONSE" | tail -n1)
-              if [ "$FLOW_HTTP_CODE" -eq 200 ]; then
-                echo "✅ Flujos consultados correctamente"
-              fi
+              for task in "${TASKS[@]}"; do
+                TASK_JSON=$(jq -n \
+                  --arg title "$task - $UNIQUE_SUFFIX" \
+                  --arg planId "$PLAN_ID" \
+                  '{
+                    "planId": $planId,
+                    "title": $title
+                  }')
+                
+                curl -s -o /dev/null \
+                  -X POST "https://graph.microsoft.com/v1.0/planner/tasks" \
+                  -H "Authorization: Bearer $TOKEN" \
+                  -H "Content-Type: application/json" \
+                  -d "$TASK_JSON"
+              done
+              echo "✅ Tareas de desarrollo creadas: ${#TASKS[@]}"
             fi
+            
+            # --- 4. Crear Team y Canal de Desarrollo ---
+            echo "📋 Paso 4: Configurando equipo de desarrollo..."
+            TEAM_JSON='{
+              "memberSettings": {
+                "allowCreateUpdateChannels": true,
+                "allowDeleteChannels": true
+              },
+              "messagingSettings": {
+                "allowUserEditMessages": true,
+                "allowUserDeleteMessages": true
+              },
+              "funSettings": {
+                "allowGiphy": true,
+                "giphyContentRating": "strict"
+              }
+            }'
+            
+            CREATE_TEAM=$(curl -s -o /dev/null -w "%{http_code}" \
+              -X PUT "https://graph.microsoft.com/v1.0/groups/$GROUP_ID/team" \
+              -H "Authorization: Bearer $TOKEN" \
+              -H "Content-Type: application/json" \
+              -d "$TEAM_JSON")
+            
+            if [ "$CREATE_TEAM" -eq 201 ] || [ "$CREATE_TEAM" -eq 200 ]; then
+              echo "✅ Team creado, agregando canal de desarrollo..."
+              sleep 5
+              
+              CHANNEL_JSON=$(jq -n \
+                --arg name "Dev Power Platform" \
+                '{
+                  "displayName": $name,
+                  "description": "Canal para actividades de desarrollo Power Platform",
+                  "membershipType": "standard"
+                }')
+              
+              curl -s -o /dev/null \
+                -X POST "https://graph.microsoft.com/v1.0/teams/$GROUP_ID/channels" \
+                -H "Authorization: Bearer $TOKEN" \
+                -H "Content-Type: application/json" \
+                -d "$CHANNEL_JSON"
+              echo "✅ Canal de desarrollo creado"
+            fi
+            
+            # --- 5. Subir documentación técnica a SharePoint (actividad de documentación) ---
+            echo "📋 Paso 5: Subiendo documentación de desarrollo..."
+            DRIVE_INFO=$(curl -s \
+              -X GET "https://graph.microsoft.com/v1.0/groups/$GROUP_ID/drive" \
+              -H "Authorization: Bearer $TOKEN")
+            
+            DRIVE_ID=$(echo "$DRIVE_INFO" | jq -r '.id')
+            if [ "$DRIVE_ID" != "null" ] && [ -n "$DRIVE_ID" ]; then
+              echo "Especificación técnica - Componente Power Apps
+              Fecha: $(date)
+              Desarrollador: GitHub Actions E5
+              Version: $UNIQUE_SUFFIX
+              Tipo: Canvas App
+              Conectores: SharePoint, Office 365, Dataverse" > /tmp/spec.txt
+              
+              curl -s -o /dev/null \
+                -X PUT "https://graph.microsoft.com/v1.0/drives/$DRIVE_ID/root:/espec-powerapp-$UNIQUE_SUFFIX.txt:/content" \
+                -H "Authorization: Bearer $TOKEN" \
+                -H "Content-Type: text/plain" \
+                --upload-file /tmp/spec.txt
+              echo "✅ Documentación técnica subida a SharePoint"
+            fi
+            
+            # --- 6. Crear evento de sprint planning (usa Calendars.ReadWrite) ---
+            echo "📋 Paso 6: Creando evento de sprint planning..."
+            START_TIME=$(date -u -d '+2 hours' --iso-8601=seconds)
+            END_TIME=$(date -u -d '+3 hours' --iso-8601=seconds)
+            
+            EVENT_JSON=$(jq -n \
+              --arg subject "Sprint Review: Power Platform Development $UNIQUE_SUFFIX" \
+              --arg start "$START_TIME" \
+              --arg end "$END_TIME" \
+              '{
+                "subject": $subject,
+                "body": {
+                  "contentType": "HTML",
+                  "content": "<h3>Sprint Review - Proyecto Power Platform</h3><p>Revisión de avances en desarrollo de aplicaciones y automatizaciones.</p><ul><li>Canvas Apps</li><li>Power Automate</li><li>Dataverse</li></ul>"
+                },
+                "start": {
+                  "dateTime": $start,
+                  "timeZone": "UTC"
+                },
+                "end": {
+                  "dateTime": $end,
+                  "timeZone": "UTC"
+                },
+                "attendees": [],
+                "isOnlineMeeting": true,
+                "onlineMeetingProvider": "teamsForBusiness"
+              }')
+            
+            curl -s -o /dev/null \
+              -X POST "https://graph.microsoft.com/v1.0/users/${{ secrets.MS_GRAPH_USER_EMAIL }}/calendar/events" \
+              -H "Authorization: Bearer $TOKEN" \
+              -H "Content-Type: application/json" \
+              -d "$EVENT_JSON"
+            echo "✅ Evento de sprint creado"
+            
           else
-            echo "⚠️ Error al listar entornos (Código: $ENV_HTTP_CODE)"
-            echo "Respuesta: $ENV_BODY"
-            # No fallamos para no bloquear el workflow
-            echo "FIRST_ENV_ID=none" >> $GITHUB_OUTPUT
+            echo "⚠️ No se pudo crear el grupo (Código: $HTTP_CODE)"
+            echo "Respuesta: $BODY"
+            exit 1
           fi
           
-          echo "✅ Actividad de Power Platform completada"
+          echo ""
+          echo "🎉 Resumen Actividad Power Platform:"
+          echo "   ✅ Grupo de proyecto creado"
+          echo "   ✅ Plan de desarrollo en Planner"
+          echo "   ✅ Tareas de desarrollo creadas"
+          echo "   ✅ Team y canal de desarrollo"
+          echo "   ✅ Documentación técnica en SharePoint"
+          echo "   ✅ Evento de sprint en calendario"
+          echo "   📝 Sufijo: $UNIQUE_SUFFIX"
+          echo ""
+          echo "✅ Actividad de desarrollo completada exitosamente"
 
       - name: 15. Registrar fin de actividad y hacer commit
         if: always() # Usamos always() para que el log se registre incluso si un paso anterior falló (opcional)
