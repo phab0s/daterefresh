@@ -577,12 +577,17 @@ jobs:
         run: |
           echo "📊 Creando actividad en Excel Online..."
           
-          # Usar endpoint /users/{email}/ para tokens de aplicación
           BASE_URL="https://graph.microsoft.com/v1.0/users/$USER_EMAIL/drive"
+          
+          # Crear carpeta E5-Dev-Docs si no existe
+          curl -s -o /dev/null -X POST "$BASE_URL/root/children" \
+            -H "Authorization: Bearer $TOKEN" \
+            -H "Content-Type: application/json" \
+            -d '{"name": "E5-Dev-Docs", "folder": {}, "@microsoft.graph.conflictBehavior": "fail"}' || true
           
           # Crear archivo Excel vacío
           CREATE_EXCEL=$(curl -s -w "\n%{http_code}" \
-            -X POST "$BASE_URL/root:/E5-Dev-Docs/Sprint-Metrics-$UNIQUE_SUFFIX.xlsx:/content" \
+            -X PUT "$BASE_URL/root:/E5-Dev-Docs/Sprint-Metrics-$UNIQUE_SUFFIX.xlsx:/content" \
             -H "Authorization: Bearer $TOKEN" \
             -H "Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" \
             --data-binary "")
@@ -625,68 +630,8 @@ jobs:
             echo "⚠️ No se pudo crear Excel (código: $HTTP_CODE)"
           fi
 
-      - name: 13c. Actividad en OneNote (Notas de Desarrollo)
-        if: steps.set_vars.outputs.RUN_ONENOTE == 'true'
-        env:
-          TOKEN: ${{ steps.get_token.outputs.TOKEN }}
-          UNIQUE_SUFFIX: ${{ steps.set_vars.outputs.UNIQUE_SUFFIX }}
-          USER_EMAIL: ${{ secrets.MS_GRAPH_USER_EMAIL }}
-        run: |
-          echo "📓 Creando actividad en OneNote..."
-          
-          # Usar endpoint /users/{email}/ en lugar de /me/ para tokens de aplicación
-          BASE_URL="https://graph.microsoft.com/v1.0/users/$USER_EMAIL/onenote"
-          
-          # Buscar notebook existente
-          NOTEBOOKS=$(curl -s -X GET "$BASE_URL/notebooks" -H "Authorization: Bearer $TOKEN")
-          NOTEBOOK_ID=$(echo "$NOTEBOOKS" | jq -r '.value[] | select(.displayName == "E5-Development-Notes") | .id' 2>/dev/null | head -n1)
-          
-          if [ -z "$NOTEBOOK_ID" ] || [ "$NOTEBOOK_ID" = "null" ]; then
-            echo "📒 Creando notebook de desarrollo..."
-            CREATE_NB=$(curl -s -w "\n%{http_code}" -X POST "$BASE_URL/notebooks" \
-              -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
-              -d '{"displayName": "E5-Development-Notes"}')
-            HTTP_CODE=$(echo "$CREATE_NB" | tail -n1)
-            if [ "$HTTP_CODE" = "201" ]; then
-              NOTEBOOK_ID=$(echo "$CREATE_NB" | sed '$d' | jq -r '.id')
-              echo "✅ Notebook creado: $NOTEBOOK_ID"
-            else
-              echo "⚠️ No se pudo crear notebook (código: $HTTP_CODE)"
-              echo "Respuesta: $(echo "$CREATE_NB" | sed '$d')"
-            fi
-          else
-            echo "✅ Notebook existente encontrado: $NOTEBOOK_ID"
-          fi
-          
-          if [ -n "$NOTEBOOK_ID" ] && [ "$NOTEBOOK_ID" != "null" ]; then
-            SECTIONS=$(curl -s -X GET "$BASE_URL/notebooks/$NOTEBOOK_ID/sections" -H "Authorization: Bearer $TOKEN")
-            SECTION_ID=$(echo "$SECTIONS" | jq -r '.value[0].id // empty' 2>/dev/null)
-            
-            if [ -z "$SECTION_ID" ] || [ "$SECTION_ID" = "null" ]; then
-              echo "📑 Creando sección..."
-              CREATE_SEC=$(curl -s -w "\n%{http_code}" -X POST "$BASE_URL/notebooks/$NOTEBOOK_ID/sections" \
-                -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
-                -d '{"displayName": "Sprint Notes"}')
-              if [ "$(echo "$CREATE_SEC" | tail -n1)" = "201" ]; then
-                SECTION_ID=$(echo "$CREATE_SEC" | sed '$d' | jq -r '.id')
-                echo "✅ Sección creada"
-              fi
-            fi
-            
-            if [ -n "$SECTION_ID" ] && [ "$SECTION_ID" != "null" ]; then
-              echo "📝 Creando página de notas..."
-              CURRENT_DATE=$(date +%Y-%m-%d)
-              
-              PAGE_HTML="<!DOCTYPE html><html><head><title>Sprint Notes - $UNIQUE_SUFFIX</title></head><body><h1>Notas de Desarrollo - $CURRENT_DATE</h1><h2>Resumen del Sprint</h2><ul><li>Implementacion de API Power Platform</li><li>Configuracion de conectores Dataverse</li><li>Testing de flujos de Power Automate</li></ul><h2>Decisiones Tecnicas</h2><p>Se decidio usar Azure Functions para logica compleja.</p><h2>Proximos Pasos</h2><ul><li>Completar integracion con SharePoint</li><li>Revision de codigo del equipo</li></ul></body></html>"
-              
-              curl -s -o /dev/null -X POST "$BASE_URL/sections/$SECTION_ID/pages" \
-                -H "Authorization: Bearer $TOKEN" -H "Content-Type: text/html" \
-                -d "$PAGE_HTML" || true
-              
-              echo "✅ Página de notas de sprint creada en OneNote"
-            fi
-          fi
-          echo "✅ Actividad OneNote completada"
+      # NOTA: OneNote API ya no soporta tokens de aplicación desde marzo 2025
+      # Ver: https://learn.microsoft.com/en-us/graph/auth-v2-user
 
       - name: 13d. Actividad en Microsoft Forms (Encuesta)
         if: steps.set_vars.outputs.RUN_FORMS == 'true'
