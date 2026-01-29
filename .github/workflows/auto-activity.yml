@@ -675,10 +675,10 @@ jobs:
           
           # Buscar o crear notebook de desarrollo
           NOTEBOOKS=$(curl -s \
-            -X GET "https://graph.microsoft.com/v1.0/me/onenote/notebooks?\$filter=displayName eq 'E5-Development-Notes'" \
+            -X GET "https://graph.microsoft.com/v1.0/me/onenote/notebooks" \
             -H "Authorization: Bearer $TOKEN")
           
-          NOTEBOOK_ID=$(echo "$NOTEBOOKS" | jq -r '.value[0].id // empty')
+          NOTEBOOK_ID=$(echo "$NOTEBOOKS" | jq -r '.value[] | select(.displayName == "E5-Development-Notes") | .id' 2>/dev/null | head -n1)
           
           if [ -z "$NOTEBOOK_ID" ] || [ "$NOTEBOOK_ID" = "null" ]; then
             echo "📒 Creando notebook de desarrollo..."
@@ -688,10 +688,15 @@ jobs:
               -H "Content-Type: application/json" \
               -d '{"displayName": "E5-Development-Notes"}')
             
-            if [ "$(echo "$CREATE_NB" | tail -n1)" -eq 201 ]; then
+            HTTP_CODE=$(echo "$CREATE_NB" | tail -n1)
+            if [ "$HTTP_CODE" = "201" ]; then
               NOTEBOOK_ID=$(echo "$CREATE_NB" | sed '$d' | jq -r '.id')
-              echo "✅ Notebook creado"
+              echo "✅ Notebook creado: $NOTEBOOK_ID"
+            else
+              echo "⚠️ No se pudo crear notebook (código: $HTTP_CODE)"
             fi
+          else
+            echo "✅ Notebook existente encontrado: $NOTEBOOK_ID"
           fi
           
           if [ -n "$NOTEBOOK_ID" ] && [ "$NOTEBOOK_ID" != "null" ]; then
@@ -700,52 +705,62 @@ jobs:
               -X GET "https://graph.microsoft.com/v1.0/me/onenote/notebooks/$NOTEBOOK_ID/sections" \
               -H "Authorization: Bearer $TOKEN")
             
-            SECTION_ID=$(echo "$SECTIONS" | jq -r '.value[0].id // empty')
+            SECTION_ID=$(echo "$SECTIONS" | jq -r '.value[0].id // empty' 2>/dev/null)
             
             if [ -z "$SECTION_ID" ] || [ "$SECTION_ID" = "null" ]; then
+              echo "📑 Creando sección..."
               CREATE_SEC=$(curl -s -w "\n%{http_code}" \
                 -X POST "https://graph.microsoft.com/v1.0/me/onenote/notebooks/$NOTEBOOK_ID/sections" \
                 -H "Authorization: Bearer $TOKEN" \
                 -H "Content-Type: application/json" \
                 -d '{"displayName": "Sprint Notes"}')
               
-              if [ "$(echo "$CREATE_SEC" | tail -n1)" -eq 201 ]; then
+              if [ "$(echo "$CREATE_SEC" | tail -n1)" = "201" ]; then
                 SECTION_ID=$(echo "$CREATE_SEC" | sed '$d' | jq -r '.id')
+                echo "✅ Sección creada"
               fi
             fi
             
-            if [ -n "$SECTION_ID" ]; then
-              # Crear página con notas de desarrollo
-              PAGE_HTML="<!DOCTYPE html>
-              <html>
-              <head><title>Sprint Notes - $UNIQUE_SUFFIX</title></head>
-              <body>
-                <h1>Notas de Desarrollo - $(date +%Y-%m-%d)</h1>
-                <h2>Resumen del Sprint</h2>
-                <ul>
-                  <li>Implementación de API Power Platform</li>
-                  <li>Configuración de conectores Dataverse</li>
-                  <li>Testing de flujos de Power Automate</li>
-                </ul>
-                <h2>Decisiones Técnicas</h2>
-                <p>Se decidió usar Azure Functions para lógica compleja.</p>
-                <h2>Próximos Pasos</h2>
-                <ul>
-                  <li>Completar integración con SharePoint</li>
-                  <li>Revisión de código del equipo</li>
-                </ul>
-              </body>
-              </html>"
+            if [ -n "$SECTION_ID" ] && [ "$SECTION_ID" != "null" ]; then
+              echo "📝 Creando página de notas..."
+              CURRENT_DATE=$(date +%Y-%m-%d)
+              
+              # Crear HTML usando heredoc para evitar problemas de escape
+              cat > /tmp/onenote_page.html << EOF
+<!DOCTYPE html>
+<html>
+<head><title>Sprint Notes - $UNIQUE_SUFFIX</title></head>
+<body>
+<h1>Notas de Desarrollo - $CURRENT_DATE</h1>
+<h2>Resumen del Sprint</h2>
+<ul>
+<li>Implementacion de API Power Platform</li>
+<li>Configuracion de conectores Dataverse</li>
+<li>Testing de flujos de Power Automate</li>
+</ul>
+<h2>Decisiones Tecnicas</h2>
+<p>Se decidio usar Azure Functions para logica compleja.</p>
+<h2>Proximos Pasos</h2>
+<ul>
+<li>Completar integracion con SharePoint</li>
+<li>Revision de codigo del equipo</li>
+</ul>
+</body>
+</html>
+EOF
               
               curl -s -o /dev/null \
                 -X POST "https://graph.microsoft.com/v1.0/me/onenote/sections/$SECTION_ID/pages" \
                 -H "Authorization: Bearer $TOKEN" \
                 -H "Content-Type: text/html" \
-                -d "$PAGE_HTML"
+                --data-binary "@/tmp/onenote_page.html" || true
               
               echo "✅ Página de notas de sprint creada en OneNote"
+              rm -f /tmp/onenote_page.html
             fi
           fi
+          
+          echo "✅ Actividad OneNote completada"
 
       - name: 14d. Actividad en Microsoft Forms (Encuesta)
         if: steps.set_vars.outputs.RUN_FORMS == 'true'
