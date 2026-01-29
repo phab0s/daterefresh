@@ -862,7 +862,7 @@ jobs:
             fi
           fi
 
-      - name: 20. Comunicación de Equipo (Email al Grupo + Webhook)
+      - name: 20. Comunicación de Equipo (Email al Grupo + Webhook) [CORREGIDO]
         env:
           TOKEN: ${{ steps.get_token.outputs.TOKEN }}
           UNIQUE_SUFFIX: ${{ steps.set_vars.outputs.UNIQUE_SUFFIX }}
@@ -872,14 +872,14 @@ jobs:
         run: |
           echo "💬 Enviando resumen de actividad al equipo..."
           USE_FALLBACK="true"
+          CURRENT_DATE=$(date)
           
-          # MÉTODO 1: Enviar email al grupo (funciona con Mail.Send Application)
+          # MÉTODO 1: Enviar email al grupo
           if [ -n "$GROUP_ID" ] && [ "$GROUP_ID" != "null" ]; then
-            echo "📧 Obteniendo dirección del grupo para enviar email..."
+            echo "📧 Obteniendo dirección del grupo..."
             
-            # Obtener email del grupo
             GROUP_DATA=$(curl -s \
-              -X GET "https://graph.microsoft.com/v1.0/groups/$GROUP_ID?$select=mail" \
+              -X GET "https://graph.microsoft.com/v1.0/groups/$GROUP_ID?\$select=mail" \
               -H "Authorization: Bearer $TOKEN")
             
             GROUP_EMAIL=$(echo "$GROUP_DATA" | jq -r '.mail // empty')
@@ -887,16 +887,18 @@ jobs:
             if [ -n "$GROUP_EMAIL" ] && [ "$GROUP_EMAIL" != "null" ]; then
               echo "📬 Enviando email a: $GROUP_EMAIL"
               
+              # Crear contenido HTML del email pasando variables correctamente
               EMAIL_JSON=$(jq -n \
                 --arg to "$GROUP_EMAIL" \
                 --arg subject "Pipeline E5 Completado - $UNIQUE_SUFFIX" \
                 --arg suffix "$UNIQUE_SUFFIX" \
+                --arg date "$CURRENT_DATE" \
                 '{
                   "message": {
                     "subject": $subject,
                     "body": {
                       "contentType": "HTML",
-                      "content": "<h2>🚀 Pipeline de Desarrollo E5 Finalizado</h2><p><b>ID de Ejecución:</b> \($suffix)<br><b>Fecha:</b> '$(date)'</p><h3>Resumen de Actividades:</h3><ul><li>✅ <b>Grupo de Proyecto:</b> Creado con Team asociado</li><li>✅ <b>Planner:</b> Plan de desarrollo y 5 tareas creadas</li><li>✅ <b>SharePoint:</b> Backlog con historias de usuario y página wiki</li><li>✅ <b>OneDrive:</b> Documentación técnica y especificaciones API</li><li>✅ <b>Calendario:</b> 14 Daily standups + Sprint planning mensual</li><li>✅ <b>To Do:</b> Lista personal de tareas de desarrollo</li></ul><p><i>Este resumen fue generado automáticamente por GitHub Actions.</i></p>"
+                      "content": ("<h2>🚀 Pipeline de Desarrollo E5 Finalizado</h2><p><b>ID de Ejecución:</b> " + $suffix + "<br><b>Fecha:</b> " + $date + "</p><h3>Resumen de Actividades:</h3><ul><li>✅ <b>Grupo de Proyecto:</b> Creado con Team asociado</li><li>✅ <b>Planner:</b> Plan de desarrollo y 5 tareas creadas</li><li>✅ <b>SharePoint:</b> Backlog con historias de usuario</li><li>✅ <b>OneDrive:</b> Documentación técnica y specs API</li><li>✅ <b>Calendario:</b> 14 Daily standups + Planning</li><li>✅ <b>To Do:</b> Lista personal de tareas dev</li></ul><p><i>Generado automáticamente por GitHub Actions.</i></p>")
                     },
                     "toRecipients": [
                       {
@@ -927,7 +929,7 @@ jobs:
             echo "⚠️ No hay GROUP_ID disponible"
           fi
           
-          # MÉTODO 2: Webhook de Teams (garantizado)
+          # MÉTODO 2: Webhook de Teams
           if [ "$USE_FALLBACK" = "true" ]; then
             echo "📡 Enviando notificación via webhook..."
             
@@ -940,14 +942,10 @@ jobs:
                 "summary": "Pipeline E5 Completado",
                 "sections": [{
                   "activityTitle": "🚀 Actividad de Desarrollo E5 Finalizada",
-                  "activitySubtitle": "Todas las operaciones completadas exitosamente",
+                  "activitySubtitle": "Todas las operaciones completadas",
                   "facts": [
                     {"name": "ID Ejecución", "value": $suffix},
-                    {"name": "Grupo Proyecto", "value": "✅ Creado"},
-                    {"name": "Planner", "value": "✅ Plan + Tareas"},
-                    {"name": "SharePoint", "value": "✅ Backlog + Wiki"},
-                    {"name": "OneDrive", "value": "✅ Documentación"},
-                    {"name": "Calendario", "value": "✅ Eventos recurrentes"}
+                    {"name": "Estado", "value": "✅ Completado"}
                   ],
                   "markdown": true
                 }]
