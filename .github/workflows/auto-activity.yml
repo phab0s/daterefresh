@@ -888,22 +888,21 @@ jobs:
             # Crear tareas técnicas (demuestra planificación de desarrollo)
             TASKS=("Revisar pull requests del equipo" "Actualizar documentación técnica" "Optimizar queries de Dataverse" "Configurar CI/CD para solución Power Platform" "Code review: conectores personalizados")
             
+            # Calcular fechas una sola vez
+            DUE_DATE=$(date -u -d '+2 days' +%Y-%m-%dT%H:%M:%SZ)
+            REMINDER_DATE=$(date -u -d '+1 day' +%Y-%m-%dT09:00:00Z)
+            
             for task in "${TASKS[@]}"; do
               TASK_JSON=$(jq -n \
                 --arg title "$task" \
-                --arg date "$(date -u -d '+2 days' +%Y-%m-%dT%H:%M:%SZ)" \
+                --arg dueDate "$DUE_DATE" \
+                --arg reminderDate "$REMINDER_DATE" \
                 '{
                   "title": $title,
-                  "dueDateTime": {
-                    "dateTime": $date,
-                    "timeZone": "UTC"
-                  },
+                  "dueDateTime": {"dateTime": $dueDate, "timeZone": "UTC"},
                   "importance": "high",
                   "isReminderOn": true,
-                  "reminderDateTime": {
-                    "dateTime": "$(date -u -d '+1 day' +%Y-%m-%dT09:00:00Z)",
-                    "timeZone": "UTC"
-                  }
+                  "reminderDateTime": {"dateTime": $reminderDate, "timeZone": "UTC"}
                 }')
               
               curl -s -o /dev/null \
