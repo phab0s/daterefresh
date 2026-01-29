@@ -2,7 +2,12 @@ name: Desarrollo de Proyecto 365
 
 on:
   schedule:
-    - cron: '0 10 * * 1,3,5' # Ejecuta a las 10:00 UTC los Lunes, Miércoles y Viernes
+    # Horarios variados para simular comportamiento orgánico
+    - cron: '15 8 * * 1'   # Lunes 8:15 UTC
+    - cron: '42 14 * * 2'  # Martes 14:42 UTC  
+    - cron: '5 11 * * 3'   # Miércoles 11:05 UTC
+    - cron: '33 9 * * 4'   # Jueves 9:33 UTC
+    - cron: '50 16 * * 5'  # Viernes 16:50 UTC
   workflow_dispatch: {}
 
 permissions:
@@ -18,7 +23,7 @@ jobs:
       - name: 1. Checkout del repositorio
         uses: actions/checkout@v4
 
-      - name: 2. Configurar variables dinámicas
+      - name: 2. Configurar variables dinámicas y selección aleatoria
         id: set_vars
         run: |
           UNIQUE_SUFFIX=$(date +%Y%m%d-%H%M%S)
@@ -26,6 +31,23 @@ jobs:
           echo "SHAREPOINT_FILE_NAME=actividad-log-${UNIQUE_SUFFIX}.txt" >> $GITHUB_OUTPUT
           echo "OUTLOOK_START_TIME=$(date -u -d '+1 hour' --iso-8601=seconds)" >> $GITHUB_OUTPUT
           echo "OUTLOOK_END_TIME=$(date -u -d '+1 hour 5 minutes' --iso-8601=seconds)" >> $GITHUB_OUTPUT
+          
+          # Selección aleatoria de actividades para simular comportamiento orgánico
+          # Cada ejecución realizará un subconjunto diferente de actividades
+          DAY_OF_WEEK=$(date +%u)  # 1=Lunes, 5=Viernes
+          RANDOM_SEED=$(($(date +%s) % 100))
+          
+          # Actividades base (siempre se ejecutan)
+          echo "RUN_CORE=true" >> $GITHUB_OUTPUT
+          
+          # Actividades opcionales basadas en día y aleatoriedad
+          [[ $DAY_OF_WEEK -eq 1 || $RANDOM_SEED -lt 40 ]] && echo "RUN_EXCEL=true" >> $GITHUB_OUTPUT || echo "RUN_EXCEL=false" >> $GITHUB_OUTPUT
+          [[ $DAY_OF_WEEK -eq 3 || $RANDOM_SEED -lt 50 ]] && echo "RUN_ONENOTE=true" >> $GITHUB_OUTPUT || echo "RUN_ONENOTE=false" >> $GITHUB_OUTPUT
+          [[ $DAY_OF_WEEK -eq 5 || $RANDOM_SEED -lt 30 ]] && echo "RUN_FORMS=true" >> $GITHUB_OUTPUT || echo "RUN_FORMS=false" >> $GITHUB_OUTPUT
+          [[ $RANDOM_SEED -lt 60 ]] && echo "RUN_PLANNER_EXTRA=true" >> $GITHUB_OUTPUT || echo "RUN_PLANNER_EXTRA=false" >> $GITHUB_OUTPUT
+          [[ $DAY_OF_WEEK -le 3 ]] && echo "RUN_DAILY_STANDUPS=true" >> $GITHUB_OUTPUT || echo "RUN_DAILY_STANDUPS=false" >> $GITHUB_OUTPUT
+          
+          echo "🎲 Configuración aleatoria: Día=$DAY_OF_WEEK, Seed=$RANDOM_SEED"
 
       - name: 3. Registrar inicio de actividad local
         run: |
@@ -574,6 +596,224 @@ jobs:
           echo ""
           echo "✅ Actividad de desarrollo completada exitosamente"
 
+      - name: 14b. Actividad en Excel Online (Hoja de Cálculo)
+        if: steps.set_vars.outputs.RUN_EXCEL == 'true'
+        env:
+          TOKEN: ${{ steps.get_token.outputs.TOKEN }}
+          UNIQUE_SUFFIX: ${{ steps.set_vars.outputs.UNIQUE_SUFFIX }}
+        run: |
+          echo "📊 Creando actividad en Excel Online..."
+          
+          # Crear un nuevo libro de Excel en OneDrive
+          EXCEL_CONTENT=$(cat << 'EOF'
+          {
+            "name": "Sprint-Metrics.xlsx",
+            "@microsoft.graph.conflictBehavior": "rename"
+          }
+          EOF
+          )
+          
+          # Crear archivo Excel vacío
+          CREATE_EXCEL=$(curl -s -w "\n%{http_code}" \
+            -X POST "https://graph.microsoft.com/v1.0/me/drive/root:/E5-Dev-Docs/Sprint-Metrics-$UNIQUE_SUFFIX.xlsx:/content" \
+            -H "Authorization: Bearer $TOKEN" \
+            -H "Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" \
+            --data-binary "")
+          
+          HTTP_CODE=$(echo "$CREATE_EXCEL" | tail -n1)
+          
+          if [ "$HTTP_CODE" -eq 201 ] || [ "$HTTP_CODE" -eq 200 ]; then
+            ITEM_ID=$(echo "$CREATE_EXCEL" | sed '$d' | jq -r '.id')
+            echo "✅ Archivo Excel creado: Sprint-Metrics-$UNIQUE_SUFFIX.xlsx"
+            
+            # Crear sesión de workbook para editar
+            SESSION=$(curl -s \
+              -X POST "https://graph.microsoft.com/v1.0/me/drive/items/$ITEM_ID/workbook/createSession" \
+              -H "Authorization: Bearer $TOKEN" \
+              -H "Content-Type: application/json" \
+              -d '{"persistChanges": true}')
+            
+            SESSION_ID=$(echo "$SESSION" | jq -r '.id // empty')
+            
+            if [ -n "$SESSION_ID" ]; then
+              # Agregar datos de métricas de sprint
+              RANGE_DATA='{
+                "values": [
+                  ["Sprint", "Velocidad", "Bugs", "Features", "Fecha"],
+                  ["Sprint 1", 42, 3, 8, "'$(date +%Y-%m-%d)'"],
+                  ["Sprint 2", 38, 5, 6, "'$(date -d '+14 days' +%Y-%m-%d)'"],
+                  ["Sprint 3", 45, 2, 10, "'$(date -d '+28 days' +%Y-%m-%d)'"]
+                ]
+              }'
+              
+              curl -s -o /dev/null \
+                -X PATCH "https://graph.microsoft.com/v1.0/me/drive/items/$ITEM_ID/workbook/worksheets/Sheet1/range(address='A1:E4')" \
+                -H "Authorization: Bearer $TOKEN" \
+                -H "Content-Type: application/json" \
+                -H "workbook-session-id: $SESSION_ID" \
+                -d "$RANGE_DATA"
+              
+              # Cerrar sesión
+              curl -s -o /dev/null \
+                -X POST "https://graph.microsoft.com/v1.0/me/drive/items/$ITEM_ID/workbook/closeSession" \
+                -H "Authorization: Bearer $TOKEN" \
+                -H "workbook-session-id: $SESSION_ID"
+              
+              echo "✅ Datos de métricas de sprint agregados a Excel"
+            fi
+          else
+            echo "⚠️ No se pudo crear Excel (código: $HTTP_CODE)"
+          fi
+
+      - name: 14c. Actividad en OneNote (Notas de Desarrollo)
+        if: steps.set_vars.outputs.RUN_ONENOTE == 'true'
+        env:
+          TOKEN: ${{ steps.get_token.outputs.TOKEN }}
+          UNIQUE_SUFFIX: ${{ steps.set_vars.outputs.UNIQUE_SUFFIX }}
+        run: |
+          echo "📓 Creando actividad en OneNote..."
+          
+          # Buscar o crear notebook de desarrollo
+          NOTEBOOKS=$(curl -s \
+            -X GET "https://graph.microsoft.com/v1.0/me/onenote/notebooks?\$filter=displayName eq 'E5-Development-Notes'" \
+            -H "Authorization: Bearer $TOKEN")
+          
+          NOTEBOOK_ID=$(echo "$NOTEBOOKS" | jq -r '.value[0].id // empty')
+          
+          if [ -z "$NOTEBOOK_ID" ] || [ "$NOTEBOOK_ID" = "null" ]; then
+            echo "📒 Creando notebook de desarrollo..."
+            CREATE_NB=$(curl -s -w "\n%{http_code}" \
+              -X POST "https://graph.microsoft.com/v1.0/me/onenote/notebooks" \
+              -H "Authorization: Bearer $TOKEN" \
+              -H "Content-Type: application/json" \
+              -d '{"displayName": "E5-Development-Notes"}')
+            
+            if [ "$(echo "$CREATE_NB" | tail -n1)" -eq 201 ]; then
+              NOTEBOOK_ID=$(echo "$CREATE_NB" | sed '$d' | jq -r '.id')
+              echo "✅ Notebook creado"
+            fi
+          fi
+          
+          if [ -n "$NOTEBOOK_ID" ] && [ "$NOTEBOOK_ID" != "null" ]; then
+            # Obtener sección por defecto o crear una
+            SECTIONS=$(curl -s \
+              -X GET "https://graph.microsoft.com/v1.0/me/onenote/notebooks/$NOTEBOOK_ID/sections" \
+              -H "Authorization: Bearer $TOKEN")
+            
+            SECTION_ID=$(echo "$SECTIONS" | jq -r '.value[0].id // empty')
+            
+            if [ -z "$SECTION_ID" ] || [ "$SECTION_ID" = "null" ]; then
+              CREATE_SEC=$(curl -s -w "\n%{http_code}" \
+                -X POST "https://graph.microsoft.com/v1.0/me/onenote/notebooks/$NOTEBOOK_ID/sections" \
+                -H "Authorization: Bearer $TOKEN" \
+                -H "Content-Type: application/json" \
+                -d '{"displayName": "Sprint Notes"}')
+              
+              if [ "$(echo "$CREATE_SEC" | tail -n1)" -eq 201 ]; then
+                SECTION_ID=$(echo "$CREATE_SEC" | sed '$d' | jq -r '.id')
+              fi
+            fi
+            
+            if [ -n "$SECTION_ID" ]; then
+              # Crear página con notas de desarrollo
+              PAGE_HTML="<!DOCTYPE html>
+              <html>
+              <head><title>Sprint Notes - $UNIQUE_SUFFIX</title></head>
+              <body>
+                <h1>Notas de Desarrollo - $(date +%Y-%m-%d)</h1>
+                <h2>Resumen del Sprint</h2>
+                <ul>
+                  <li>Implementación de API Power Platform</li>
+                  <li>Configuración de conectores Dataverse</li>
+                  <li>Testing de flujos de Power Automate</li>
+                </ul>
+                <h2>Decisiones Técnicas</h2>
+                <p>Se decidió usar Azure Functions para lógica compleja.</p>
+                <h2>Próximos Pasos</h2>
+                <ul>
+                  <li>Completar integración con SharePoint</li>
+                  <li>Revisión de código del equipo</li>
+                </ul>
+              </body>
+              </html>"
+              
+              curl -s -o /dev/null \
+                -X POST "https://graph.microsoft.com/v1.0/me/onenote/sections/$SECTION_ID/pages" \
+                -H "Authorization: Bearer $TOKEN" \
+                -H "Content-Type: text/html" \
+                -d "$PAGE_HTML"
+              
+              echo "✅ Página de notas de sprint creada en OneNote"
+            fi
+          fi
+
+      - name: 14d. Actividad en Microsoft Forms (Encuesta)
+        if: steps.set_vars.outputs.RUN_FORMS == 'true'
+        env:
+          TOKEN: ${{ steps.get_token.outputs.TOKEN }}
+          UNIQUE_SUFFIX: ${{ steps.set_vars.outputs.UNIQUE_SUFFIX }}
+        run: |
+          echo "📝 Creando actividad en Microsoft Forms..."
+          
+          # Nota: Microsoft Forms API tiene limitaciones
+          # Usamos la API de Graph para crear un formulario básico
+          
+          FORM_JSON=$(jq -n \
+            --arg title "Sprint Feedback - $UNIQUE_SUFFIX" \
+            --arg desc "Encuesta de retroalimentación del sprint" \
+            '{
+              "displayName": $title,
+              "description": $desc
+            }')
+          
+          # Crear formulario (si la API lo permite)
+          CREATE_FORM=$(curl -s -w "\n%{http_code}" \
+            -X POST "https://graph.microsoft.com/v1.0/me/drive/root:/Forms:/children" \
+            -H "Authorization: Bearer $TOKEN" \
+            -H "Content-Type: application/json" \
+            -d "$FORM_JSON")
+          
+          HTTP_CODE=$(echo "$CREATE_FORM" | tail -n1)
+          
+          # Forms tiene API limitada, usamos alternativa: crear archivo en carpeta Forms
+          if [ "$HTTP_CODE" -ne 201 ]; then
+            # Crear carpeta Forms si no existe
+            curl -s -o /dev/null \
+              -X POST "https://graph.microsoft.com/v1.0/me/drive/root/children" \
+              -H "Authorization: Bearer $TOKEN" \
+              -H "Content-Type: application/json" \
+              -d '{"name": "Forms", "folder": {}, "@microsoft.graph.conflictBehavior": "fail"}' || true
+            
+            # Crear documento de feedback como alternativa
+            FEEDBACK_DOC="# Sprint Feedback Form - $UNIQUE_SUFFIX
+            
+            ## Preguntas de Retroalimentación
+            
+            1. ¿Cómo calificarías la productividad del sprint? (1-5)
+            2. ¿Qué funcionó bien?
+            3. ¿Qué podríamos mejorar?
+            4. ¿Hay algún impedimento pendiente?
+            
+            ## Respuestas
+            Fecha: $(date)
+            Sprint: $UNIQUE_SUFFIX
+            
+            ---
+            Generado por GitHub Actions E5"
+            
+            echo "$FEEDBACK_DOC" > /tmp/feedback.md
+            
+            curl -s -o /dev/null \
+              -X PUT "https://graph.microsoft.com/v1.0/me/drive/root:/Forms/Sprint-Feedback-$UNIQUE_SUFFIX.md:/content" \
+              -H "Authorization: Bearer $TOKEN" \
+              -H "Content-Type: text/markdown" \
+              --upload-file /tmp/feedback.md
+            
+            echo "✅ Documento de feedback creado (alternativa a Forms)"
+          else
+            echo "✅ Formulario creado en Microsoft Forms"
+          fi
+
       - name: 21. Limpieza Selectiva de Recursos Efímeros
         if: always()
         env:
@@ -582,9 +822,10 @@ jobs:
         run: |
           echo "🧹 Limpieza selectiva de recursos efímeros (conservando proyecto principal)..."
           
-          # 1. Limpiar eventos de calendario antiguos (>7 días) con nuestro patrón
-          echo "📅 Limpiando eventos de calendario antiguos..."
-          CUTOFF_DATE=$(date -u -d '-7 days' +%Y-%m-%dT00:00:00Z)
+          # 1. Limpiar eventos de calendario antiguos (>30 días) con nuestro patrón
+          # Conservamos más historial para demostrar actividad continua
+          echo "📅 Limpiando eventos de calendario antiguos (>30 días)..."
+          CUTOFF_DATE=$(date -u -d '-30 days' +%Y-%m-%dT00:00:00Z)
           USER_EMAIL="${{ secrets.MS_GRAPH_USER_EMAIL }}"
           
           # Usar -G y --data-urlencode para queries OData complejas
