@@ -46,6 +46,25 @@ jobs:
           echo "::add-mask::$TOKEN" # Mascarar el token en los logs
           echo "Token de acceso para Graph obtenido exitosamente."
 
+      - name: 5b. Obtener token de acceso para Power Platform API
+        id: get_pp_token
+        env:
+          PP_CLIENT_ID: ${{ secrets.POWER_PLATFORM_CLIENT_ID }}
+          PP_CLIENT_SECRET: ${{ secrets.POWER_PLATFORM_CLIENT_SECRET }}
+          PP_TENANT_ID: ${{ secrets.POWER_PLATFORM_TENANT_ID }}
+        run: |
+          # Obtener token usando OAuth 2.0 Client Credentials
+          PP_TOKEN=$(curl -s -X POST "https://login.microsoftonline.com/$PP_TENANT_ID/oauth2/v2.0/token" \
+            -H "Content-Type: application/x-www-form-urlencoded" \
+            -d "client_id=$PP_CLIENT_ID" \
+            -d "client_secret=$PP_CLIENT_SECRET" \
+            -d "scope=https://api.powerplatform.com/.default" \
+            -d "grant_type=client_credentials" | jq -r '.access_token')
+          
+          echo "PP_TOKEN=$PP_TOKEN" >> $GITHUB_OUTPUT
+          echo "::add-mask::$PP_TOKEN"
+          echo "Token de acceso para Power Platform API obtenido exitosamente."
+
       - name: 6. Asegurar que el canal de logs existe y es utilizable
         id: setup_channel
         env:
@@ -307,10 +326,10 @@ jobs:
           if [ "$(echo "$RESPONSE" | tail -n1)" -ne 202 ]; then echo "Error al enviar correo: $(echo "$RESPONSE" | sed '$d')" && exit 1; fi
           echo "✅ Correo de resumen enviado exitosamente."
 
-      - name: 14. Actividad de Desarrollo en Power Platform
+      - name: 14. Actividad de Desarrollo en Power Platform (Corregido)
         id: power_platform_activity
         env:
-          GRAPH_TOKEN: ${{ steps.get_token.outputs.TOKEN }}
+          PP_TOKEN: ${{ steps.get_pp_token.outputs.PP_TOKEN }}
           UNIQUE_SUFFIX: ${{ steps.set_vars.outputs.UNIQUE_SUFFIX }}
         run: |
           echo "🔍 Iniciando actividad de desarrollo en Power Platform..."
@@ -318,8 +337,8 @@ jobs:
           # --- 1. Listar entornos de Power Platform ---
           echo "📋 Paso 1: Listando entornos de Power Platform..."
           ENVIRONMENTS_RESPONSE=$(curl -s -w "\n%{http_code}" \
-            -X GET "https://graph.microsoft.com/beta/powerPlatform/environments" \
-            -H "Authorization: Bearer $GRAPH_TOKEN")
+            -X GET "https://api.powerplatform.com/v1.0/environments" \
+            -H "Authorization: Bearer $PP_TOKEN")
           
           ENV_HTTP_CODE=$(echo "$ENVIRONMENTS_RESPONSE" | tail -n1)
           ENV_BODY=$(echo "$ENVIRONMENTS_RESPONSE" | sed '$d')
@@ -328,93 +347,43 @@ jobs:
             ENV_COUNT=$(echo "$ENV_BODY" | jq '.value | length')
             echo "✅ Entornos encontrados: $ENV_COUNT"
             echo "$ENV_BODY" | jq -r '.value[] | "   - \(.displayName) (\(.properties.environmentSku))"'
-          else
-            echo "⚠️ No se pudieron listar entornos (Código: $ENV_HTTP_CODE)"
-            echo "   Continuando con otros pasos..."
-            exit 0
-          fi
-          
-          # --- 2. Listar aplicaciones en Power Platform ---
-          echo "📋 Paso 2: Listando aplicaciones de Power Platform..."
-          APPS_RESPONSE=$(curl -s -w "\n%{http_code}" \
-            -X GET "https://graph.microsoft.com/beta/powerPlatform/environments/default/applications" \
-            -H "Authorization: Bearer $GRAPH_TOKEN")
-          
-          APP_HTTP_CODE=$(echo "$APPS_RESPONSE" | tail -n1)
-          APP_BODY=$(echo "$APPS_RESPONSE" | sed '$d')
-          
-          if [ "$APP_HTTP_CODE" -eq 200 ]; then
-            APP_COUNT=$(echo "$APP_BODY" | jq '.value | length' 2>/dev/null || echo "0")
-            echo "✅ Aplicaciones encontradas: $APP_COUNT"
-            if [ "$APP_COUNT" -gt 0 ]; then
-              echo "$APP_BODY" | jq -r '.value[] | "   - \(.displayName)"'
-            else
-              echo "   (No se encontraron aplicaciones, esto es normal)"
+            
+            # Guardar el ID del primer entorno (sin espacios)
+            FIRST_ENV_ID=$(echo "$ENV_BODY" | jq -r '.value[0].name')
+            echo "FIRST_ENV_ID=$FIRST_ENV_ID" >> $GITHUB_OUTPUT
+            
+            # --- 2. Listar aplicaciones en el entorno ---
+            if [ -n "$FIRST_ENV_ID" ] && [ "$FIRST_ENV_ID" != "null" ]; then
+              echo "📋 Paso 2: Listando aplicaciones..."
+              APPS_RESPONSE=$(curl -s -w "\n%{http_code}" \
+                -X GET "https://api.powerplatform.com/v1.0/environments/${FIRST_ENV_ID}/apps" \
+                -H "Authorization: Bearer $PP_TOKEN")
+              
+              APP_HTTP_CODE=$(echo "$APPS_RESPONSE" | tail -n1)
+              if [ "$APP_HTTP_CODE" -eq 200 ]; then
+                APP_COUNT=$(echo "$APPS_RESPONSE" | jq -s '.[0].value | length' 2>/dev/null || echo "0")
+                echo "✅ Aplicaciones encontradas: $APP_COUNT"
+              fi
+
+              # --- 3. Listar flujos ---
+              echo "📋 Paso 3: Listando flujos..."
+              FLOWS_RESPONSE=$(curl -s -w "\n%{http_code}" \
+                -X GET "https://api.powerplatform.com/v1.0/environments/${FIRST_ENV_ID}/flows" \
+                -H "Authorization: Bearer $PP_TOKEN")
+              
+              FLOW_HTTP_CODE=$(echo "$FLOWS_RESPONSE" | tail -n1)
+              if [ "$FLOW_HTTP_CODE" -eq 200 ]; then
+                echo "✅ Flujos consultados correctamente"
+              fi
             fi
           else
-            echo "⚠️ No se pudieron listar aplicaciones (Código: $APP_HTTP_CODE)"
-            echo "   Esto puede ser normal si no hay aplicaciones"
+            echo "⚠️ Error al listar entornos (Código: $ENV_HTTP_CODE)"
+            echo "Respuesta: $ENV_BODY"
+            # No fallamos para no bloquear el workflow
+            echo "FIRST_ENV_ID=none" >> $GITHUB_OUTPUT
           fi
           
-          # --- 3. Listar flujos de Power Automate ---
-          echo "📋 Paso 3: Listando flujos de Power Automate..."
-          FLOWS_RESPONSE=$(curl -s -w "\n%{http_code}" \
-            -X GET "https://graph.microsoft.com/beta/powerPlatform/environments/default/flows" \
-            -H "Authorization: Bearer $GRAPH_TOKEN")
-          
-          FLOW_HTTP_CODE=$(echo "$FLOWS_RESPONSE" | tail -n1)
-          FLOW_BODY=$(echo "$FLOWS_RESPONSE" | sed '$d')
-          
-          if [ "$FLOW_HTTP_CODE" -eq 200 ]; then
-            FLOW_COUNT=$(echo "$FLOW_BODY" | jq '.value | length' 2>/dev/null || echo "0")
-            echo "✅ Flujos encontrados: $FLOW_COUNT"
-            if [ "$FLOW_COUNT" -gt 0 ]; then
-              echo "$FLOW_BODY" | jq -r '.value[] | "   - \(.displayName)"'
-            else
-              echo "   (No se encontraron flujos, esto es normal)"
-            fi
-          else
-            echo "⚠️ No se pudieron listar flujos (Código: $FLOW_HTTP_CODE)"
-            echo "   Esto puede ser normal si no hay flujos"
-          fi
-          
-          # --- 4. Intentar crear una solución simple (operación de escritura) ---
-          echo "📋 Paso 4: Creando registro de actividad en Power Platform..."
-          
-          # Intentar obtener el ID del primer entorno disponible
-          FIRST_ENV_ID=$(echo "$ENV_BODY" | jq -r '.value[0].id' 2>/dev/null)
-          
-          if [ -n "$FIRST_ENV_ID" ] && [ "$FIRST_ENV_ID" != "null" ]; then
-            echo "   Usando entorno: $FIRST_ENV_ID"
-            
-            # Intentar listar componentes del entorno (esto demuestra actividad de lectura)
-            COMPONENTS_RESPONSE=$(curl -s -w "\n%{http_code}" \
-              -X GET "https://graph.microsoft.com/beta/powerPlatform/environments/$FIRST_ENV_ID/components" \
-              -H "Authorization: Bearer $GRAPH_TOKEN")
-            
-            COMP_HTTP_CODE=$(echo "$COMPONENTS_RESPONSE" | tail -n1)
-            
-            if [ "$COMP_HTTP_CODE" -eq 200 ]; then
-              echo "✅ Componentes del entorno listados exitosamente"
-            else
-              echo "⚠️ No se pudieron listar componentes (Código: $COMP_HTTP_CODE)"
-              echo "   Esto es aceptable, la actividad de Power Platform ya fue demostrada"
-            fi
-          else
-            echo "⚠️ No se encontró un entorno válido para listar componentes"
-            echo "   La actividad de Power Platform ya fue demostrada con pasos anteriores"
-          fi
-          
-          # --- 5. Resumen ---
-          echo ""
-          echo "🎉 Resumen de actividad de Power Platform:"
-          echo "   ✅ Listado de entornos completado"
-          echo "   ✅ Listado de aplicaciones completado"
-          echo "   ✅ Listado de flujos completado"
-          echo "   ✅ Operaciones de lectura de Power Platform ejecutadas"
-          echo "   📝 Sufijo de ejecución: $UNIQUE_SUFFIX"
-          echo ""
-          echo "✅ Actividad de desarrollo en Power Platform completada exitosamente."
+          echo "✅ Actividad de Power Platform completada"
 
       - name: 15. Registrar fin de actividad y hacer commit
         if: always() # Usamos always() para que el log se registre incluso si un paso anterior falló (opcional)
