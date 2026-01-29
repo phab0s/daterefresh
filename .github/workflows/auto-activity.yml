@@ -68,24 +68,7 @@ jobs:
           echo "::add-mask::$TOKEN" # Mascarar el token en los logs
           echo "Token de acceso para Graph obtenido exitosamente."
 
-      - name: 5b. Obtener token de acceso para Power Platform API
-        id: get_pp_token
-        env:
-          PP_CLIENT_ID: ${{ secrets.POWER_PLATFORM_CLIENT_ID }}
-          PP_CLIENT_SECRET: ${{ secrets.POWER_PLATFORM_CLIENT_SECRET }}
-          PP_TENANT_ID: ${{ secrets.POWER_PLATFORM_TENANT_ID }}
-        run: |
-          # Obtener token usando OAuth 2.0 Client Credentials
-          PP_TOKEN=$(curl -s -X POST "https://login.microsoftonline.com/$PP_TENANT_ID/oauth2/v2.0/token" \
-            -H "Content-Type: application/x-www-form-urlencoded" \
-            -d "client_id=$PP_CLIENT_ID" \
-            -d "client_secret=$PP_CLIENT_SECRET" \
-            -d "scope=https://api.powerplatform.com/.default" \
-            -d "grant_type=client_credentials" | jq -r '.access_token')
-          
-          echo "PP_TOKEN=$PP_TOKEN" >> $GITHUB_OUTPUT
-          echo "::add-mask::$PP_TOKEN"
-          echo "Token de acceso para Power Platform API obtenido exitosamente."
+
 
       - name: 6. Asegurar que el canal de logs existe y es utilizable
         id: setup_channel
@@ -601,21 +584,16 @@ jobs:
         env:
           TOKEN: ${{ steps.get_token.outputs.TOKEN }}
           UNIQUE_SUFFIX: ${{ steps.set_vars.outputs.UNIQUE_SUFFIX }}
+          USER_EMAIL: ${{ secrets.MS_GRAPH_USER_EMAIL }}
         run: |
           echo "📊 Creando actividad en Excel Online..."
           
-          # Crear un nuevo libro de Excel en OneDrive
-          EXCEL_CONTENT=$(cat << 'EOF'
-          {
-            "name": "Sprint-Metrics.xlsx",
-            "@microsoft.graph.conflictBehavior": "rename"
-          }
-          EOF
-          )
+          # Usar endpoint /users/{email}/ para tokens de aplicación
+          BASE_URL="https://graph.microsoft.com/v1.0/users/$USER_EMAIL/drive"
           
           # Crear archivo Excel vacío
           CREATE_EXCEL=$(curl -s -w "\n%{http_code}" \
-            -X POST "https://graph.microsoft.com/v1.0/me/drive/root:/E5-Dev-Docs/Sprint-Metrics-$UNIQUE_SUFFIX.xlsx:/content" \
+            -X POST "$BASE_URL/root:/E5-Dev-Docs/Sprint-Metrics-$UNIQUE_SUFFIX.xlsx:/content" \
             -H "Authorization: Bearer $TOKEN" \
             -H "Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" \
             --data-binary "")
@@ -628,7 +606,7 @@ jobs:
             
             # Crear sesión de workbook para editar
             SESSION=$(curl -s \
-              -X POST "https://graph.microsoft.com/v1.0/me/drive/items/$ITEM_ID/workbook/createSession" \
+              -X POST "$BASE_URL/items/$ITEM_ID/workbook/createSession" \
               -H "Authorization: Bearer $TOKEN" \
               -H "Content-Type: application/json" \
               -d '{"persistChanges": true}')
@@ -637,17 +615,10 @@ jobs:
             
             if [ -n "$SESSION_ID" ]; then
               # Agregar datos de métricas de sprint
-              RANGE_DATA='{
-                "values": [
-                  ["Sprint", "Velocidad", "Bugs", "Features", "Fecha"],
-                  ["Sprint 1", 42, 3, 8, "'$(date +%Y-%m-%d)'"],
-                  ["Sprint 2", 38, 5, 6, "'$(date -d '+14 days' +%Y-%m-%d)'"],
-                  ["Sprint 3", 45, 2, 10, "'$(date -d '+28 days' +%Y-%m-%d)'"]
-                ]
-              }'
+              RANGE_DATA='{"values": [["Sprint", "Velocidad", "Bugs", "Features", "Fecha"],["Sprint 1", 42, 3, 8, "'$(date +%Y-%m-%d)'"],["Sprint 2", 38, 5, 6, "'$(date -d '+14 days' +%Y-%m-%d)'"],["Sprint 3", 45, 2, 10, "'$(date -d '+28 days' +%Y-%m-%d)'"]]}'
               
               curl -s -o /dev/null \
-                -X PATCH "https://graph.microsoft.com/v1.0/me/drive/items/$ITEM_ID/workbook/worksheets/Sheet1/range(address='A1:E4')" \
+                -X PATCH "$BASE_URL/items/$ITEM_ID/workbook/worksheets/Sheet1/range(address='A1:E4')" \
                 -H "Authorization: Bearer $TOKEN" \
                 -H "Content-Type: application/json" \
                 -H "workbook-session-id: $SESSION_ID" \
@@ -655,7 +626,7 @@ jobs:
               
               # Cerrar sesión
               curl -s -o /dev/null \
-                -X POST "https://graph.microsoft.com/v1.0/me/drive/items/$ITEM_ID/workbook/closeSession" \
+                -X POST "$BASE_URL/items/$ITEM_ID/workbook/closeSession" \
                 -H "Authorization: Bearer $TOKEN" \
                 -H "workbook-session-id: $SESSION_ID"
               
@@ -733,67 +704,50 @@ jobs:
         env:
           TOKEN: ${{ steps.get_token.outputs.TOKEN }}
           UNIQUE_SUFFIX: ${{ steps.set_vars.outputs.UNIQUE_SUFFIX }}
+          USER_EMAIL: ${{ secrets.MS_GRAPH_USER_EMAIL }}
         run: |
           echo "📝 Creando actividad en Microsoft Forms..."
           
-          # Nota: Microsoft Forms API tiene limitaciones
-          # Usamos la API de Graph para crear un formulario básico
+          # Usar endpoint /users/{email}/ para tokens de aplicación
+          BASE_URL="https://graph.microsoft.com/v1.0/users/$USER_EMAIL/drive"
           
-          FORM_JSON=$(jq -n \
-            --arg title "Sprint Feedback - $UNIQUE_SUFFIX" \
-            --arg desc "Encuesta de retroalimentación del sprint" \
-            '{
-              "displayName": $title,
-              "description": $desc
-            }')
+          # Forms tiene API limitada, usamos alternativa: crear archivo markdown en carpeta Forms
+          # Esto genera actividad en OneDrive como alternativa válida
           
-          # Crear formulario (si la API lo permite)
-          CREATE_FORM=$(curl -s -w "\n%{http_code}" \
-            -X POST "https://graph.microsoft.com/v1.0/me/drive/root:/Forms:/children" \
+          # Crear carpeta Forms si no existe
+          curl -s -o /dev/null \
+            -X POST "$BASE_URL/root/children" \
             -H "Authorization: Bearer $TOKEN" \
             -H "Content-Type: application/json" \
-            -d "$FORM_JSON")
+            -d '{"name": "Forms", "folder": {}, "@microsoft.graph.conflictBehavior": "fail"}' || true
           
-          HTTP_CODE=$(echo "$CREATE_FORM" | tail -n1)
+          # Crear documento de feedback como alternativa
+          FEEDBACK_DOC="# Sprint Feedback Form - $UNIQUE_SUFFIX
+
+## Preguntas de Retroalimentación
+
+1. ¿Cómo calificarías la productividad del sprint? (1-5)
+2. ¿Qué funcionó bien?
+3. ¿Qué podríamos mejorar?
+4. ¿Hay algún impedimento pendiente?
+
+## Respuestas
+Fecha: $(date)
+Sprint: $UNIQUE_SUFFIX
+
+---
+Generado por GitHub Actions E5"
           
-          # Forms tiene API limitada, usamos alternativa: crear archivo en carpeta Forms
-          if [ "$HTTP_CODE" -ne 201 ]; then
-            # Crear carpeta Forms si no existe
-            curl -s -o /dev/null \
-              -X POST "https://graph.microsoft.com/v1.0/me/drive/root/children" \
-              -H "Authorization: Bearer $TOKEN" \
-              -H "Content-Type: application/json" \
-              -d '{"name": "Forms", "folder": {}, "@microsoft.graph.conflictBehavior": "fail"}' || true
-            
-            # Crear documento de feedback como alternativa
-            FEEDBACK_DOC="# Sprint Feedback Form - $UNIQUE_SUFFIX
-            
-            ## Preguntas de Retroalimentación
-            
-            1. ¿Cómo calificarías la productividad del sprint? (1-5)
-            2. ¿Qué funcionó bien?
-            3. ¿Qué podríamos mejorar?
-            4. ¿Hay algún impedimento pendiente?
-            
-            ## Respuestas
-            Fecha: $(date)
-            Sprint: $UNIQUE_SUFFIX
-            
-            ---
-            Generado por GitHub Actions E5"
-            
-            echo "$FEEDBACK_DOC" > /tmp/feedback.md
-            
-            curl -s -o /dev/null \
-              -X PUT "https://graph.microsoft.com/v1.0/me/drive/root:/Forms/Sprint-Feedback-$UNIQUE_SUFFIX.md:/content" \
-              -H "Authorization: Bearer $TOKEN" \
-              -H "Content-Type: text/markdown" \
-              --upload-file /tmp/feedback.md
-            
-            echo "✅ Documento de feedback creado (alternativa a Forms)"
-          else
-            echo "✅ Formulario creado en Microsoft Forms"
-          fi
+          echo "$FEEDBACK_DOC" > /tmp/feedback.md
+          
+          curl -s -o /dev/null \
+            -X PUT "$BASE_URL/root:/Forms/Sprint-Feedback-$UNIQUE_SUFFIX.md:/content" \
+            -H "Authorization: Bearer $TOKEN" \
+            -H "Content-Type: text/markdown" \
+            --upload-file /tmp/feedback.md
+          
+          rm -f /tmp/feedback.md
+          echo "✅ Documento de feedback creado (alternativa a Forms)"
 
       - name: 21. Limpieza Selectiva de Recursos Efímeros
         if: always()
