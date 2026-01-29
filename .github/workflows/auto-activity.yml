@@ -862,54 +862,74 @@ jobs:
             fi
           fi
 
-      - name: 20. Comunicación de Equipo (Conversación de Grupo) [CORREGIDO]
+      - name: 20. Comunicación de Equipo (Email al Grupo + Webhook)
         env:
           TOKEN: ${{ steps.get_token.outputs.TOKEN }}
           UNIQUE_SUFFIX: ${{ steps.set_vars.outputs.UNIQUE_SUFFIX }}
           GROUP_ID: ${{ steps.power_platform_activity.outputs.GROUP_ID }}
+          USER_EMAIL: ${{ secrets.MS_GRAPH_USER_EMAIL }}
           TEAMS_WEBHOOK_URL: ${{ secrets.TEAMS_WEBHOOK_URL }}
         run: |
-          echo "💬 Enviando actualización de status al equipo..."
+          echo "💬 Enviando resumen de actividad al equipo..."
+          USE_FALLBACK="true"
           
-          if [ -z "$GROUP_ID" ] || [ "$GROUP_ID" = "null" ]; then
-            echo "⚠️ No se encontró GROUP_ID del paso anterior."
-            USE_FALLBACK="true"
-          else
-            echo "📋 Group ID: $GROUP_ID"
+          # MÉTODO 1: Enviar email al grupo (funciona con Mail.Send Application)
+          if [ -n "$GROUP_ID" ] && [ "$GROUP_ID" != "null" ]; then
+            echo "📧 Obteniendo dirección del grupo para enviar email..."
             
-            # MÉTODO 1: Crear conversación en el grupo (funciona sin Team creado)
-            echo "📝 Creando conversación en el grupo..."
-            CONVERSATION_JSON=$(jq -n \
-              --arg topic "Pipeline Dev E5 - $UNIQUE_SUFFIX" \
-              --arg body "<h3>🚀 Pipeline de Desarrollo Completado</h3><p><b>ID:</b> $UNIQUE_SUFFIX<br><b>Fecha:</b> $(date)</p><p>Actividades realizadas:</p><ul><li>✅ Grupo de proyecto creado</li><li>✅ Backlog en SharePoint</li><li>✅ Tareas en Planner</li><li>✅ Documentación técnica</li><li>✅ Eventos de sprint</li></ul>" \
-              '{
-                "topic": $topic,
-                "body": {
-                  "contentType": "html",
-                  "content": $body
-                }
-              }')
+            # Obtener email del grupo
+            GROUP_DATA=$(curl -s \
+              -X GET "https://graph.microsoft.com/v1.0/groups/$GROUP_ID?$select=mail" \
+              -H "Authorization: Bearer $TOKEN")
             
-            CONV_RESPONSE=$(curl -s -w "\n%{http_code}" \
-              -X POST "https://graph.microsoft.com/v1.0/groups/$GROUP_ID/conversations" \
-              -H "Authorization: Bearer $TOKEN" \
-              -H "Content-Type: application/json" \
-              -d "$CONVERSATION_JSON")
+            GROUP_EMAIL=$(echo "$GROUP_DATA" | jq -r '.mail // empty')
             
-            CONV_CODE=$(echo "$CONV_RESPONSE" | tail -n1)
-            
-            if [ "$CONV_CODE" -eq 201 ] || [ "$CONV_CODE" -eq 200 ]; then
-              echo "✅ Conversación creada en el grupo (método principal)"
-              USE_FALLBACK="false"
+            if [ -n "$GROUP_EMAIL" ] && [ "$GROUP_EMAIL" != "null" ]; then
+              echo "📬 Enviando email a: $GROUP_EMAIL"
+              
+              EMAIL_JSON=$(jq -n \
+                --arg to "$GROUP_EMAIL" \
+                --arg subject "Pipeline E5 Completado - $UNIQUE_SUFFIX" \
+                --arg suffix "$UNIQUE_SUFFIX" \
+                '{
+                  "message": {
+                    "subject": $subject,
+                    "body": {
+                      "contentType": "HTML",
+                      "content": "<h2>🚀 Pipeline de Desarrollo E5 Finalizado</h2><p><b>ID de Ejecución:</b> \($suffix)<br><b>Fecha:</b> '$(date)'</p><h3>Resumen de Actividades:</h3><ul><li>✅ <b>Grupo de Proyecto:</b> Creado con Team asociado</li><li>✅ <b>Planner:</b> Plan de desarrollo y 5 tareas creadas</li><li>✅ <b>SharePoint:</b> Backlog con historias de usuario y página wiki</li><li>✅ <b>OneDrive:</b> Documentación técnica y especificaciones API</li><li>✅ <b>Calendario:</b> 14 Daily standups + Sprint planning mensual</li><li>✅ <b>To Do:</b> Lista personal de tareas de desarrollo</li></ul><p><i>Este resumen fue generado automáticamente por GitHub Actions.</i></p>"
+                    },
+                    "toRecipients": [
+                      {
+                        "emailAddress": {
+                          "address": $to
+                        }
+                      }
+                    ]
+                  }
+                }')
+              
+              EMAIL_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
+                -X POST "https://graph.microsoft.com/v1.0/users/$USER_EMAIL/sendMail" \
+                -H "Authorization: Bearer $TOKEN" \
+                -H "Content-Type: application/json" \
+                -d "$EMAIL_JSON")
+              
+              if [ "$EMAIL_CODE" -eq 202 ]; then
+                echo "✅ Email enviado al grupo: $GROUP_EMAIL"
+                USE_FALLBACK="false"
+              else
+                echo "⚠️ Error enviando email (HTTP $EMAIL_CODE)"
+              fi
             else
-              echo "⚠️ No se pudo crear conversación (HTTP $CONV_CODE). Usando webhook..."
-              USE_FALLBACK="true"
+              echo "⚠️ El grupo no tiene email configurado"
             fi
+          else
+            echo "⚠️ No hay GROUP_ID disponible"
           fi
           
-          # MÉTODO 2: Fallback a Webhook de Teams (garantizado)
+          # MÉTODO 2: Webhook de Teams (garantizado)
           if [ "$USE_FALLBACK" = "true" ]; then
-            echo "📡 Enviando via webhook de Teams..."
+            echo "📡 Enviando notificación via webhook..."
             
             WEBHOOK_JSON=$(jq -n \
               --arg suffix "$UNIQUE_SUFFIX" \
@@ -919,15 +939,15 @@ jobs:
                 "themeColor": "28A745",
                 "summary": "Pipeline E5 Completado",
                 "sections": [{
-                  "activityTitle": "🚀 <b>Actividad de Desarrollo E5 Finalizada</b>",
+                  "activityTitle": "🚀 Actividad de Desarrollo E5 Finalizada",
                   "activitySubtitle": "Todas las operaciones completadas exitosamente",
                   "facts": [
-                    {"name": "Versión", "value": $suffix},
-                    {"name": "Grupo", "value": "Creado (Team en provisión)"},
-                    {"name": "Planner", "value": "Plan y tareas creados"},
-                    {"name": "SharePoint", "value": "Backlog y documentación"},
-                    {"name": "OneDrive", "value": "Artefactos técnicos"},
-                    {"name": "Calendario", "value": "Eventos de sprint"}
+                    {"name": "ID Ejecución", "value": $suffix},
+                    {"name": "Grupo Proyecto", "value": "✅ Creado"},
+                    {"name": "Planner", "value": "✅ Plan + Tareas"},
+                    {"name": "SharePoint", "value": "✅ Backlog + Wiki"},
+                    {"name": "OneDrive", "value": "✅ Documentación"},
+                    {"name": "Calendario", "value": "✅ Eventos recurrentes"}
                   ],
                   "markdown": true
                 }]
@@ -939,8 +959,8 @@ jobs:
               -d "$WEBHOOK_JSON")
             
             if [ "$WH_CODE" -eq 200 ]; then
-              echo "✅ Notificación enviada via webhook de Teams"
+              echo "✅ Notificación enviada via Teams Webhook"
             else
-              echo "⚠️ Webhook falló (HTTP $WH_CODE), pero el pipeline continúa"
+              echo "⚠️ Webhook falló (HTTP $WH_CODE)"
             fi
           fi
