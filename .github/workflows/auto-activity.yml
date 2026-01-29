@@ -862,76 +862,85 @@ jobs:
             fi
           fi
 
-      - name: 20. Comunicación de Equipo en Teams (Mensaje de Status) [CORREGIDO]
+      - name: 20. Comunicación de Equipo (Conversación de Grupo) [CORREGIDO]
         env:
           TOKEN: ${{ steps.get_token.outputs.TOKEN }}
           UNIQUE_SUFFIX: ${{ steps.set_vars.outputs.UNIQUE_SUFFIX }}
           GROUP_ID: ${{ steps.power_platform_activity.outputs.GROUP_ID }}
+          TEAMS_WEBHOOK_URL: ${{ secrets.TEAMS_WEBHOOK_URL }}
         run: |
           echo "💬 Enviando actualización de status al equipo..."
-          echo "📋 Group ID recibido: $GROUP_ID"
           
-          # Validar que tenemos GROUP_ID
           if [ -z "$GROUP_ID" ] || [ "$GROUP_ID" = "null" ]; then
-            echo "⚠️ No se encontró GROUP_ID del paso anterior. Omitiendo mensaje de Teams."
-            exit 0
-          fi
-          
-          # Limpiar posibles espacios en el ID
-          CLEAN_GROUP_ID=$(echo "$GROUP_ID" | xargs)
-          
-          # Intentar obtener el canal General (con timeout y mejor manejo de errores)
-          echo "🔍 Buscando canal General..."
-          CHANNELS_RESPONSE=$(curl -s -w "\n%{http_code}" \
-            -X GET "https://graph.microsoft.com/v1.0/teams/$CLEAN_GROUP_ID/channels" \
-            -H "Authorization: Bearer $TOKEN")
-          
-          HTTP_CODE=$(echo "$CHANNELS_RESPONSE" | tail -n1)
-          CHANNELS_BODY=$(echo "$CHANNELS_RESPONSE" | sed '$d')
-          
-          if [ "$HTTP_CODE" -ne 200 ]; then
-            echo "⚠️ Error al obtener canales (HTTP $HTTP_CODE). Puede que el Team aún se esté creando."
-            echo "Respuesta: $CHANNELS_BODY"
-            exit 0
-          fi
-          
-          # Buscar canal General (o crear mensaje en el primer canal disponible como fallback)
-          CHANNEL_ID=$(echo "$CHANNELS_BODY" | jq -r '.value[] | select(.displayName == "General") | .id')
-          
-          # Si no hay General, tomar el primer canal disponible
-          if [ -z "$CHANNEL_ID" ] || [ "$CHANNEL_ID" = "null" ]; then
-            CHANNEL_ID=$(echo "$CHANNELS_BODY" | jq -r '.value[0].id')
-            echo "⚠️ Canal General no encontrado, usando primer canal disponible: $CHANNEL_ID"
-          fi
-          
-          if [ -n "$CHANNEL_ID" ] && [ "$CHANNEL_ID" != "null" ]; then
-            echo "✅ Canal encontrado: $CHANNEL_ID"
+            echo "⚠️ No se encontró GROUP_ID del paso anterior."
+            USE_FALLBACK="true"
+          else
+            echo "📋 Group ID: $GROUP_ID"
             
-            # Crear mensaje enriquecido con actualización de desarrollo
-            # Nota: El campo "from" no se puede usar con tokens de aplicación, solo delegados
-            MESSAGE_JSON=$(jq -n \
-              --arg version "$UNIQUE_SUFFIX" \
-              --arg date "$(date)" \
+            # MÉTODO 1: Crear conversación en el grupo (funciona sin Team creado)
+            echo "📝 Creando conversación en el grupo..."
+            CONVERSATION_JSON=$(jq -n \
+              --arg topic "Pipeline Dev E5 - $UNIQUE_SUFFIX" \
+              --arg body "<h3>🚀 Pipeline de Desarrollo Completado</h3><p><b>ID:</b> $UNIQUE_SUFFIX<br><b>Fecha:</b> $(date)</p><p>Actividades realizadas:</p><ul><li>✅ Grupo de proyecto creado</li><li>✅ Backlog en SharePoint</li><li>✅ Tareas en Planner</li><li>✅ Documentación técnica</li><li>✅ Eventos de sprint</li></ul>" \
               '{
+                "topic": $topic,
                 "body": {
                   "contentType": "html",
-                  "content": "<h2>🚀 Actualización de Desarrollo Automática</h2><p><b>Versión:</b> \($version)<br><b>Fecha:</b> \($date)<br><b>Estado:</b> ✅ Todas las tareas completadas</p><h3>Actividades Realizadas:</h3><ul><li>✅ Grupo de proyecto creado</li><li>✅ Backlog inicializado</li><li>✅ Documentación técnica generada</li><li>✅ Estructura de carpetas en OneDrive</li><li>✅ Eventos de sprint programados</li></ul><p><i>Este mensaje fue generado automáticamente por el pipeline de desarrollo.</i></p>"
+                  "content": $body
                 }
               }')
             
-            SEND_RESPONSE=$(curl -s -w "\n%{http_code}" \
-              -X POST "https://graph.microsoft.com/v1.0/teams/$CLEAN_GROUP_ID/channels/$CHANNEL_ID/messages" \
+            CONV_RESPONSE=$(curl -s -w "\n%{http_code}" \
+              -X POST "https://graph.microsoft.com/v1.0/groups/$GROUP_ID/conversations" \
               -H "Authorization: Bearer $TOKEN" \
               -H "Content-Type: application/json" \
-              -d "$MESSAGE_JSON")
+              -d "$CONVERSATION_JSON")
             
-            SEND_CODE=$(echo "$SEND_RESPONSE" | tail -n1)
-            if [ "$SEND_CODE" -eq 201 ] || [ "$SEND_CODE" -eq 200 ]; then
-              echo "✅ Mensaje de status enviado al canal de Teams"
+            CONV_CODE=$(echo "$CONV_RESPONSE" | tail -n1)
+            
+            if [ "$CONV_CODE" -eq 201 ] || [ "$CONV_CODE" -eq 200 ]; then
+              echo "✅ Conversación creada en el grupo (método principal)"
+              USE_FALLBACK="false"
             else
-              echo "⚠️ No se pudo enviar mensaje (HTTP $SEND_CODE). El Team puede estar en proceso de creación."
-              echo "Respuesta: $(echo "$SEND_RESPONSE" | sed '$d')"
+              echo "⚠️ No se pudo crear conversación (HTTP $CONV_CODE). Usando webhook..."
+              USE_FALLBACK="true"
             fi
-          else
-            echo "⚠️ No se encontró ningún canal disponible en el Team"
+          fi
+          
+          # MÉTODO 2: Fallback a Webhook de Teams (garantizado)
+          if [ "$USE_FALLBACK" = "true" ]; then
+            echo "📡 Enviando via webhook de Teams..."
+            
+            WEBHOOK_JSON=$(jq -n \
+              --arg suffix "$UNIQUE_SUFFIX" \
+              '{
+                "@type": "MessageCard",
+                "@context": "http://schema.org/extensions",
+                "themeColor": "28A745",
+                "summary": "Pipeline E5 Completado",
+                "sections": [{
+                  "activityTitle": "🚀 <b>Actividad de Desarrollo E5 Finalizada</b>",
+                  "activitySubtitle": "Todas las operaciones completadas exitosamente",
+                  "facts": [
+                    {"name": "Versión", "value": $suffix},
+                    {"name": "Grupo", "value": "Creado (Team en provisión)"},
+                    {"name": "Planner", "value": "Plan y tareas creados"},
+                    {"name": "SharePoint", "value": "Backlog y documentación"},
+                    {"name": "OneDrive", "value": "Artefactos técnicos"},
+                    {"name": "Calendario", "value": "Eventos de sprint"}
+                  ],
+                  "markdown": true
+                }]
+              }')
+            
+            WH_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
+              -X POST "$TEAMS_WEBHOOK_URL" \
+              -H "Content-Type: application/json" \
+              -d "$WEBHOOK_JSON")
+            
+            if [ "$WH_CODE" -eq 200 ]; then
+              echo "✅ Notificación enviada via webhook de Teams"
+            else
+              echo "⚠️ Webhook falló (HTTP $WH_CODE), pero el pipeline continúa"
+            fi
           fi
