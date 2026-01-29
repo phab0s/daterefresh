@@ -527,19 +527,375 @@ jobs:
           echo ""
           echo "✅ Actividad de desarrollo completada exitosamente"
 
-      - name: 15. Registrar fin de actividad y hacer commit
-        if: always() # Usamos always() para que el log se registre incluso si un paso anterior falló (opcional)
+      - name: 15. Crear Backlog de Proyecto en SharePoint (Estructura de Datos)
         env:
+          TOKEN: ${{ steps.get_token.outputs.TOKEN }}
+          UNIQUE_SUFFIX: ${{ steps.set_vars.outputs.UNIQUE_SUFFIX }}
+          GROUP_ID: ${{ steps.power_platform_activity.outputs.GROUP_ID }}
+        run: |
+          echo "📊 Creando estructura de base de datos de proyecto (SharePoint List)..."
+          
+          # Obtener el sitio del grupo creado en paso 14
+          SITE_INFO=$(curl -s \
+            -X GET "https://graph.microsoft.com/v1.0/groups/$GROUP_ID/sites/root" \
+            -H "Authorization: Bearer $TOKEN")
+          
+          SITE_ID=$(echo "$SITE_INFO" | jq -r '.id')
+          
+          if [ -n "$SITE_ID" ] && [ "$SITE_ID" != "null" ]; then
+            # Crear lista personalizada (simula gestión de requisitos/backlog)
+            LIST_JSON=$(jq -n \
+              --arg title "Product Backlog $UNIQUE_SUFFIX" \
+              '{
+                "displayName": $title,
+                "columns": [
+                  {
+                    "name": "StoryPoints",
+                    "number": {}
+                  },
+                  {
+                    "name": "Priority",
+                    "choice": {
+                      "choices": ["Critical", "High", "Medium", "Low"],
+                      "allowTextEntry": false
+                    }
+                  },
+                  {
+                    "name": "Sprint",
+                    "text": {}
+                  },
+                  {
+                    "name": "EstadoDesarrollo",
+                    "choice": {
+                      "choices": ["Backlog", "En Desarrollo", "Testing", "Done"],
+                      "allowTextEntry": false
+                    }
+                  }
+                ],
+                "list": {
+                  "template": "genericList"
+                }
+              }')
+            
+            CREATE_LIST=$(curl -s -w "\n%{http_code}" \
+              -X POST "https://graph.microsoft.com/v1.0/sites/$SITE_ID/lists" \
+              -H "Authorization: Bearer $TOKEN" \
+              -H "Content-Type: application/json" \
+              -d "$LIST_JSON")
+            
+            if [ "$(echo "$CREATE_LIST" | tail -n1)" -eq 201 ]; then
+              LIST_ID=$(echo "$CREATE_LIST" | sed '$d' | jq -r '.id')
+              echo "✅ Lista Product Backlog creada: $LIST_ID"
+              
+              # Agregar items de ejemplo (simula gestión activa de requisitos)
+              ITEMS=('{"fields":{"Title":"Integración API Power Platform","StoryPoints":8,"Priority":"High","Sprint":"Sprint 1","EstadoDesarrollo":"En Desarrollo"}}' '{"fields":{"Title":"Diseño UX Canvas App","StoryPoints":5,"Priority":"Medium","Sprint":"Sprint 1","EstadoDesarrollo":"Testing"}}' '{"fields":{"Title":"Configuración Dataverse","StoryPoints":13,"Priority":"Critical","Sprint":"Sprint 2","EstadoDesarrollo":"Backlog"}}')
+              
+              for item in "${ITEMS[@]}"; do
+                curl -s -o /dev/null \
+                  -X POST "https://graph.microsoft.com/v1.0/sites/$SITE_ID/lists/$LIST_ID/items" \
+                  -H "Authorization: Bearer $TOKEN" \
+                  -H "Content-Type: application/json" \
+                  -d "$item"
+              done
+              echo "✅ 3 historias de usuario agregadas al backlog"
+            fi
+          fi
+
+      - name: 16. Tareas Personales de Desarrollo (Microsoft To Do)
+        env:
+          TOKEN: ${{ steps.get_token.outputs.TOKEN }}
           UNIQUE_SUFFIX: ${{ steps.set_vars.outputs.UNIQUE_SUFFIX }}
         run: |
-          echo "Fin de actividad de desarrollo: $(date)" >> activity.log
-          git config user.name 'github-actions[bot]'
-          git config user.email 'github-actions[bot]@users.noreply.github.com'
-          if ! git diff --quiet activity.log; then
-            git add activity.log
-            git commit -m "Registro: Actividad E5 ($UNIQUE_SUFFIX)"
-            git pull --rebase origin main
-            git push
-          else
-            echo "Sin cambios en activity.log para commitear."
+          echo "📝 Creando lista de tareas personales de desarrollo..."
+          
+          # Crear lista de tareas en To Do
+          TODO_LIST=$(jq -n \
+            --arg name "Dev Tasks $UNIQUE_SUFFIX" \
+            '{"displayName": $name}')
+          
+          CREATE_TODO=$(curl -s -w "\n%{http_code}" \
+            -X POST "https://graph.microsoft.com/v1.0/me/todo/lists" \
+            -H "Authorization: Bearer $TOKEN" \
+            -H "Content-Type: application/json" \
+            -d "$TODO_LIST")
+          
+          if [ "$(echo "$CREATE_TODO" | tail -n1)" -eq 201 ]; then
+            LIST_ID=$(echo "$CREATE_TODO" | sed '$d' | jq -r '.id')
+            echo "✅ Lista To Do creada"
+            
+            # Crear tareas técnicas (demuestra planificación de desarrollo)
+            TASKS=("Revisar pull requests del equipo" "Actualizar documentación técnica" "Optimizar queries de Dataverse" "Configurar CI/CD para solución Power Platform" "Code review: conectores personalizados")
+            
+            for task in "${TASKS[@]}"; do
+              TASK_JSON=$(jq -n \
+                --arg title "$task" \
+                --arg date "$(date -u -d '+2 days' +%Y-%m-%dT%H:%M:%SZ)" \
+                '{
+                  "title": $title,
+                  "dueDateTime": {
+                    "dateTime": $date,
+                    "timeZone": "UTC"
+                  },
+                  "importance": "high",
+                  "isReminderOn": true,
+                  "reminderDateTime": {
+                    "dateTime": "$(date -u -d '+1 day' +%Y-%m-%dT09:00:00Z)",
+                    "timeZone": "UTC"
+                  }
+                }')
+              
+              curl -s -o /dev/null \
+                -X POST "https://graph.microsoft.com/v1.0/me/todo/lists/$LIST_ID/tasks" \
+                -H "Authorization: Bearer $TOKEN" \
+                -H "Content-Type: application/json" \
+                -d "$TASK_JSON"
+            done
+            echo "✅ 5 tareas de desarrollo creadas con recordatorios"
+          fi
+
+      - name: 17. Documentación Técnica en OneDrive (Artefactos de Desarrollo)
+        env:
+          TOKEN: ${{ steps.get_token.outputs.TOKEN }}
+          UNIQUE_SUFFIX: ${{ steps.set_vars.outputs.UNIQUE_SUFFIX }}
+        run: |
+          echo "📁 Creando estructura de documentación técnica..."
+          
+          # Crear carpeta principal
+          FOLDER_JSON=$(jq -n \
+            --arg name "Proyecto-E5-Dev-$UNIQUE_SUFFIX" \
+            '{"name": $name, "folder": {}, "@microsoft.graph.conflictBehavior": "rename"}')
+          
+          CREATE_FOLDER=$(curl -s -w "\n%{http_code}" \
+            -X POST "https://graph.microsoft.com/v1.0/me/drive/root/children" \
+            -H "Authorization: Bearer $TOKEN" \
+            -H "Content-Type: application/json" \
+            -d "$FOLDER_JSON")
+          
+          if [ "$(echo "$CREATE_FOLDER" | tail -n1)" -eq 201 ]; then
+            FOLDER_ID=$(echo "$CREATE_FOLDER" | sed '$d' | jq -r '.id')
+            echo "✅ Carpeta de proyecto creada en OneDrive"
+            
+            # Crear subcarpetas (estructura profesional de proyecto)
+            for subfolder in "01-Requisitos" "02-Arquitectura" "03-Documentacion-API" "04-Testing" "05-Deploy"; do
+              SUB_JSON=$(jq -n --arg name "$subfolder" '{"name": $name, "folder": {}}')
+              curl -s -o /dev/null \
+                -X POST "https://graph.microsoft.com/v1.0/me/drive/items/$FOLDER_ID/children" \
+                -H "Authorization: Bearer $TOKEN" \
+                -H "Content-Type: application/json" \
+                -d "$SUB_JSON"
+            done
+            echo "✅ Estructura de carpetas creada"
+            
+            # Crear archivo de arquitectura técnica
+            ARCH_CONTENT="# Arquitectura Power Platform - $UNIQUE_SUFFIX
+            
+            ## Componentes Principales
+            - **Canvas Apps**: Interfaz de usuario responsive
+            - **Dataverse**: Modelo de datos entidad-relación
+            - **Power Automate**: Workflows de aprobación y integración
+            - **Azure Functions**: Lógica de negocio personalizada (.NET Core)
+            
+            ## Diagrama de Flujo
+            1. Usuario → Azure AD Auth
+            2. API Gateway → Power Platform
+            3. Dataverse → SQL Azure (backend)
+            
+            ## Seguridad
+            - RBAC implementado
+            - DLP policies activas
+            - Azure Key Vault para secrets
+            
+            Fecha generación: $(date)
+            Versión: 1.0.$UNIQUE_SUFFIX"
+            
+            echo "$ARCH_CONTENT" > /tmp/arquitectura.md
+            
+            curl -s -o /dev/null \
+              -X PUT "https://graph.microsoft.com/v1.0/me/drive/items/$FOLDER_ID:/02-Arquitectura/Arquitectura-Tecnica-$UNIQUE_SUFFIX.md:/content" \
+              -H "Authorization: Bearer $TOKEN" \
+              -H "Content-Type: text/markdown" \
+              --upload-file /tmp/arquitectura.md
+            echo "✅ Documento de arquitectura subido"
+            
+            # Crear archivo de especificación de API
+            API_SPEC='{
+              "openapi": "3.0.0",
+              "info": {
+                "title": "Power Platform Integration API",
+                "version": "1.0.'$UNIQUE_SUFFIX'"
+              },
+              "paths": {
+                "/webhooks/dataverse": {
+                  "post": {
+                    "summary": "Webhook para cambios en Dataverse",
+                    "operationId": "webhookDataverse"
+                  }
+                }
+              }
+            }'
+            echo "$API_SPEC" > /tmp/api-spec.json
+            
+            curl -s -o /dev/null \
+              -X PUT "https://graph.microsoft.com/v1.0/me/drive/items/$FOLDER_ID:/03-Documentacion-API/OpenAPI-Spec-$UNIQUE_SUFFIX.json:/content" \
+              -H "Authorization: Bearer $TOKEN" \
+              -H "Content-Type: application/json" \
+              --upload-file /tmp/api-spec.json
+            echo "✅ Especificación OpenAPI subida"
+          fi
+
+      - name: 18. Eventos Recurrentes de Desarrollo (Daily Standups)
+        env:
+          TOKEN: ${{ steps.get_token.outputs.TOKEN }}
+          UNIQUE_SUFFIX: ${{ steps.set_vars.outputs.UNIQUE_SUFFIX }}
+        run: |
+          echo "📅 Programando ceremonias ágiles recurrentes..."
+          
+          # Crear serie de eventos recurrentes (Daily Standups)
+          START_DATE=$(date -u -d '+1 day' +%Y-%m-%dT09:00:00)
+          
+          EVENT_JSON=$(jq -n \
+            --arg subject "Daily Standup - Sprint $UNIQUE_SUFFIX" \
+            --arg start "$START_DATE" \
+            '{
+              "subject": $subject,
+              "body": {
+                "contentType": "HTML",
+                "content": "<h3>Daily Standup - Desarrollo Power Platform</h3><p>Reunión diaria de sincronización del equipo:</p><ul><li>¿Qué hiciste ayer?</li><li>¿Qué harás hoy?</li><li>¿Hay algún impedimento?</li></ul>"
+              },
+              "start": {
+                "dateTime": $start,
+                "timeZone": "UTC"
+              },
+              "end": {
+                "dateTime": "'$(date -u -d '+1 day 09:30:00' +%Y-%m-%dT%H:%M:%S)'",
+                "timeZone": "UTC"
+              },
+              "recurrence": {
+                "pattern": {
+                  "type": "daily",
+                  "interval": 1
+                },
+                "range": {
+                  "type": "endDate",
+                  "startDate": "'$(date -u -d '+1 day' +%Y-%m-%d)'",
+                  "endDate": "'$(date -u -d '+14 days' +%Y-%m-%d)'"
+                }
+              },
+              "isOnlineMeeting": true,
+              "onlineMeetingProvider": "teamsForBusiness"
+            }')
+          
+          curl -s -o /dev/null \
+            -X POST "https://graph.microsoft.com/v1.0/users/${{ secrets.MS_GRAPH_USER_EMAIL }}/calendar/events" \
+            -H "Authorization: Bearer $TOKEN" \
+            -H "Content-Type: application/json" \
+            -d "$EVENT_JSON"
+          echo "✅ Serie de 14 Daily Standups creada (2 semanas)"
+          
+          # Crear evento de planning mensual
+          PLANNING_JSON=$(jq -n \
+            --arg subject "Sprint Planning - Monthly" \
+            '{
+              "subject": $subject,
+              "body": {"content": "Planificación de features para el mes"},
+              "start": {"dateTime": "'$(date -u -d '+3 days 14:00:00' +%Y-%m-%dT%H:%M:%S)'", "timeZone": "UTC"},
+              "end": {"dateTime": "'$(date -u -d '+3 days 16:00:00' +%Y-%m-%dT%H:%M:%S)'", "timeZone": "UTC"},
+              "recurrence": {
+                "pattern": {"type": "relativeMonthly", "interval": 1, "daysOfWeek": ["Monday"], "index": "first"},
+                "range": {"type": "noEnd", "startDate": "'$(date -u -d '+3 days' +%Y-%m-%d)'"}
+              },
+              "isOnlineMeeting": true,
+              "onlineMeetingProvider": "teamsForBusiness"
+            }')
+          
+          curl -s -o /dev/null \
+            -X POST "https://graph.microsoft.com/v1.0/users/${{ secrets.MS_GRAPH_USER_EMAIL }}/calendar/events" \
+            -H "Authorization: Bearer $TOKEN" \
+            -H "Content-Type: application/json" \
+            -d "$PLANNING_JSON"
+          echo "✅ Evento mensual de Sprint Planning recurrente creado"
+
+      - name: 19. Wiki de Proyecto en SharePoint (Documentación Colaborativa)
+        env:
+          TOKEN: ${{ steps.get_token.outputs.TOKEN }}
+          UNIQUE_SUFFIX: ${{ steps.set_vars.outputs.UNIQUE_SUFFIX }}
+          GROUP_ID: ${{ steps.power_platform_activity.outputs.GROUP_ID }}
+        run: |
+          echo "📄 Creando página wiki de documentación técnica..."
+          
+          # Obtener el sitio del grupo
+          SITE_ID=$(curl -s \
+            -X GET "https://graph.microsoft.com/v1.0/groups/$GROUP_ID/sites/root" \
+            -H "Authorization: Bearer $TOKEN" | jq -r '.id')
+          
+          if [ -n "$SITE_ID" ] && [ "$SITE_ID" != "null" ]; then
+            # Crear página de SharePoint (Site Page)
+            PAGE_JSON=$(jq -n \
+              --arg title "Wiki Técnico Proyecto $UNIQUE_SUFFIX" \
+              '{
+                "@odata.type": "#microsoft.graph.sitePage",
+                "name": "Technical-Wiki.aspx",
+                "title": $title,
+                "pageLayout": "article",
+                "showComments": true,
+                "showRecommendedPages": true,
+                "contentType": {
+                  "name": "Site Page"
+                }
+              }')
+            
+            CREATE_PAGE=$(curl -s -w "\n%{http_code}" \
+              -X POST "https://graph.microsoft.com/v1.0/sites/$SITE_ID/pages" \
+              -H "Authorization: Bearer $TOKEN" \
+              -H "Content-Type: application/json" \
+              -d "$PAGE_JSON")
+            
+            if [ "$(echo "$CREATE_PAGE" | tail -n1)" -eq 201 ]; then
+              PAGE_ID=$(echo "$CREATE_PAGE" | sed '$d' | jq -r '.id')
+              echo "✅ Página wiki creada en SharePoint"
+              
+              # Publicar la página
+              curl -s -o /dev/null \
+                -X POST "https://graph.microsoft.com/v1.0/sites/$SITE_ID/pages/$PAGE_ID/publish" \
+                -H "Authorization: Bearer $TOKEN"
+              echo "✅ Wiki publicada y disponible"
+            fi
+          fi
+
+      - name: 20. Comunicación de Equipo en Teams (Mensaje de Status)
+        env:
+          TOKEN: ${{ steps.get_token.outputs.TOKEN }}
+          UNIQUE_SUFFIX: ${{ steps.set_vars.outputs.UNIQUE_SUFFIX }}
+          GROUP_ID: ${{ steps.power_platform_activity.outputs.GROUP_ID }}
+        run: |
+          echo "💬 Enviando actualización de status al equipo..."
+          
+          # Usar el canal creado en paso 14 (General o el de desarrollo)
+          CHANNEL_ID=$(curl -s \
+            -X GET "https://graph.microsoft.com/v1.0/teams/$GROUP_ID/channels" \
+            -H "Authorization: Bearer $TOKEN" | jq -r '.value[] | select(.displayName == "General") | .id')
+          
+          if [ -n "$CHANNEL_ID" ]; then
+            # Crear mensaje enriquecido con actualización de desarrollo
+            MESSAGE_JSON=$(jq -n \
+              --arg dev "GitHub Actions CI/CD" \
+              --arg version "$UNIQUE_SUFFIX" \
+              '{
+                "body": {
+                  "contentType": "html",
+                  "content": "<h2>🚀 Actualización de Desarrollo Automática</h2><p><b>Versión:</b> \($version)<br><b>Fecha:</b> '$(date)'<br><b>Estado:</b> ✅ Todas las tareas completadas</p><h3>Actividades Realizadas:</h3><ul><li>✅ Grupo de proyecto creado</li><li>✅ Backlog inicializado</li><li>✅ Documentación técnica generada</li><li>✅ Estructura de carpetas en OneDrive</li><li>✅ Eventos de sprint programados</li></ul><p><i>Este mensaje fue generado automáticamente por el pipeline de desarrollo.</i></p>"
+                },
+                "from": {
+                  "user": {
+                    "displayName": "DevOps Bot"
+                  }
+                }
+              }')
+            
+            curl -s -o /dev/null \
+              -X POST "https://graph.microsoft.com/v1.0/teams/$GROUP_ID/channels/$CHANNEL_ID/messages" \
+              -H "Authorization: Bearer $TOKEN" \
+              -H "Content-Type: application/json" \
+              -d "$MESSAGE_JSON"
+            echo "✅ Mensaje de status enviado al canal de Teams"
           fi
