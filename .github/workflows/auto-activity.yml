@@ -337,8 +337,11 @@ jobs:
           
           # --- 1. BUSCAR Grupo de Proyecto existente ---
           echo "📋 Paso 1: Buscando grupo de proyecto existente..."
-          EXISTING_GROUP=$(curl -s \
-            -X GET "https://graph.microsoft.com/v1.0/groups?\$filter=displayName eq '$PROJECT_NAME'&\$select=id,displayName,createdDateTime" \
+          # Usar curl -G con --data-urlencode para queries OData
+          EXISTING_GROUP=$(curl -s -G \
+            "https://graph.microsoft.com/v1.0/groups" \
+            --data-urlencode "\$filter=displayName eq '$PROJECT_NAME'" \
+            --data-urlencode "\$select=id,displayName,createdDateTime" \
             -H "Authorization: Bearer $TOKEN")
           
           GROUP_ID=$(echo "$EXISTING_GROUP" | jq -r '.value[0].id // empty')
@@ -581,9 +584,13 @@ jobs:
           # 1. Limpiar eventos de calendario antiguos (>7 días) con nuestro patrón
           echo "📅 Limpiando eventos de calendario antiguos..."
           CUTOFF_DATE=$(date -u -d '-7 days' +%Y-%m-%dT00:00:00Z)
+          USER_EMAIL="${{ secrets.MS_GRAPH_USER_EMAIL }}"
           
-          OLD_EVENTS=$(curl -s \
-            -X GET "https://graph.microsoft.com/v1.0/users/${{ secrets.MS_GRAPH_USER_EMAIL }}/calendar/events?\$filter=start/dateTime lt '$CUTOFF_DATE' and contains(subject,'E5')&\$select=id,subject" \
+          # Usar -G y --data-urlencode para queries OData complejas
+          OLD_EVENTS=$(curl -s -G \
+            "https://graph.microsoft.com/v1.0/users/${USER_EMAIL}/calendar/events" \
+            --data-urlencode "\$filter=start/dateTime lt '$CUTOFF_DATE' and contains(subject,'E5')" \
+            --data-urlencode "\$select=id,subject" \
             -H "Authorization: Bearer $TOKEN")
           
           OLD_EVENT_IDS=$(echo "$OLD_EVENTS" | jq -r '.value[].id // empty')
@@ -611,7 +618,7 @@ jobs:
             -H "Authorization: Bearer $TOKEN")
           
           # Solo eliminar listas que tengan formato de fecha (YYYYMMDD)
-          TEMP_LIST_IDS=$(echo "$TODO_LISTS" | jq -r '.value[] | select(.displayName | test("[0-9]{8}")) | .id')
+          TEMP_LIST_IDS=$(echo "$TODO_LISTS" | jq -r '.value[]? | select(.displayName | test("[0-9]{8}")) | .id // empty')
           LISTS_DELETED=0
           
           for LIST_ID in $TEMP_LIST_IDS; do
