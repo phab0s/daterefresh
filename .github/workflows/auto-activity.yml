@@ -568,7 +568,7 @@ jobs:
           echo ""
           echo "✅ Actividad de desarrollo completada exitosamente"
 
-      - name: 13b. Actividad en Excel Online (Hoja de Cálculo)
+      - name: 13a. Actividad en Excel Online (Hoja de Cálculo)
         if: steps.set_vars.outputs.RUN_EXCEL == 'true'
         env:
           TOKEN: ${{ steps.get_token.outputs.TOKEN }}
@@ -633,7 +633,7 @@ jobs:
       # NOTA: OneNote API ya no soporta tokens de aplicación desde marzo 2025
       # Ver: https://learn.microsoft.com/en-us/graph/auth-v2-user
 
-      - name: 13d. Actividad en Microsoft Forms (Encuesta)
+      - name: 13b. Actividad en Microsoft Forms (Encuesta)
         if: steps.set_vars.outputs.RUN_FORMS == 'true'
         env:
           TOKEN: ${{ steps.get_token.outputs.TOKEN }}
