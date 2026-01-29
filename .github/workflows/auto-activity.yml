@@ -49,7 +49,7 @@ jobs:
       - name: 5b. Obtener token de acceso para Dataverse
         id: get_dataverse_token
         run: |
-          DATAVERSE_URL="https://$(echo "${{ secrets.MS_GRAPH_USER_EMAIL }}" | cut -d'@' -f2 | cut -d'.' -f1).crm.dynamics.com" # Intenta adivinar la URL, ajústala si es necesario
+          DATAVERSE_URL="${{ secrets.DATAVERSE_URL }}"
           TOKEN=$(az account get-access-token --resource $DATAVERSE_URL --query accessToken -o tsv)
           echo "DATAVERSE_TOKEN=$TOKEN" >> $GITHUB_OUTPUT
           echo "::add-mask::$TOKEN"
@@ -325,25 +325,63 @@ jobs:
           UNIQUE_SUFFIX: ${{ steps.set_vars.outputs.UNIQUE_SUFFIX }}
         run: |
           echo "Realizando escritura en tabla de Dataverse para generar actividad..."
+          echo "🔍 URL de Dataverse: $DATAVERSE_URL"
+          
+          # Verificar que DATAVERSE_URL no esté vacío
+          if [ -z "$DATAVERSE_URL" ]; then
+            echo "❌ ERROR: DATAVERSE_URL está vacío. Verifica el secret en GitHub."
+            exit 1
+          fi
           
           # Este es un ejemplo para una tabla personalizada llamada 'new_activitylogs' 
           # con una columna de texto principal llamada 'new_name'.
-          # Necesitarías crear esta tabla primero en tu entorno de Dataverse.
           JSON_BODY=$(jq -n --arg log "Actividad desde GitHub Actions ${UNIQUE_SUFFIX}" '{"new_name": $log}')
           
+          echo "🔍 JSON a enviar: $JSON_BODY"
+          
           # Hacemos la llamada a la API de Dataverse para crear un nuevo registro
-          RESPONSE_CODE=$(curl -s -w "%{http_code}" -o /dev/null \
+          RESPONSE=$(curl -s -w "\n%{http_code}" \
             -X POST "$DATAVERSE_URL/api/data/v9.2/new_activitylogs" \
             -H "Authorization: Bearer $TOKEN" \
             -H "Content-Type: application/json" \
             -d "$JSON_BODY")
             
-          if [ "$RESPONSE_CODE" -eq 204 ]; then
+          HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
+          RESPONSE_BODY=$(echo "$RESPONSE" | sed '$d')
+          
+          if [ "$HTTP_CODE" -eq 204 ]; then
             echo "✅ Escritura en Dataverse completada exitosamente."
           else
-            echo "❌ Error al escribir en Dataverse. Código de respuesta: $RESPONSE_CODE"
-            # Decidimos si el workflow debe fallar en este punto o solo advertir.
-            # exit 1 # Descomenta esta línea para que el workflow falle si la escritura en Dataverse no funciona.
+            echo "❌ Error al escribir en Dataverse."
+            echo "   Código de respuesta HTTP: $HTTP_CODE"
+            echo "   Detalles del error:"
+            echo "$RESPONSE_BODY" | jq -r '. // .error.message // .error // .'
+            
+            # Manejo específico por código de error
+            case "$HTTP_CODE" in
+              401)
+                echo "   🔴 Error 401: No autorizado. Verifica:"
+                echo "      - Permisos de la App Registration en Azure"
+                echo "      - URL del recurso en el paso 5b"
+                ;;
+              403)
+                echo "   🔴 Error 403: Prohibido. Verifica:"
+                echo "      - Permisos de la tabla en Dataverse"
+                echo "      - Consentimiento de administrador concedido"
+                ;;
+              404)
+                echo "   🔴 Error 404: No encontrado. Verifica:"
+                echo "      - La tabla 'new_activitylogs' existe en Dataverse"
+                echo "      - URL de Dataverse correcta"
+                ;;
+              400)
+                echo "   🔴 Error 400: Solicitud incorrecta. Verifica:"
+                echo "      - Formato del JSON"
+                echo "      - Nombre de la columna 'new_name' es correcta"
+                ;;
+            esac
+            
+            exit 1
           fi
 
       - name: 15. Registrar fin de actividad y hacer commit
@@ -357,6 +395,7 @@ jobs:
           if ! git diff --quiet activity.log; then
             git add activity.log
             git commit -m "Registro: Actividad E5 ($UNIQUE_SUFFIX)"
+            git pull --rebase origin main
             git push
           else
             echo "Sin cambios en activity.log para commitear."
