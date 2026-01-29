@@ -399,6 +399,7 @@ jobs:
               echo "Respuesta: $BODY"
               exit 1
             fi
+          fi
           
           # --- 2. Obtener o Crear Plan en Planner ---
           echo "📋 Paso 2: Buscando plan de proyecto existente..."
@@ -593,15 +594,15 @@ jobs:
             --data-urlencode "\$select=id,subject" \
             -H "Authorization: Bearer $TOKEN")
           
-          OLD_EVENT_IDS=$(echo "$OLD_EVENTS" | jq -r '.value[].id // empty')
+          OLD_EVENT_IDS=$(echo "$OLD_EVENTS" | jq -r '.value[].id // empty' 2>/dev/null || echo "")
           EVENTS_DELETED=0
           
           for EVENT_ID in $OLD_EVENT_IDS; do
             if [ -n "$EVENT_ID" ] && [ "$EVENT_ID" != "null" ]; then
               curl -s -o /dev/null \
                 -X DELETE "https://graph.microsoft.com/v1.0/users/${{ secrets.MS_GRAPH_USER_EMAIL }}/calendar/events/$EVENT_ID" \
-                -H "Authorization: Bearer $TOKEN"
-              ((EVENTS_DELETED++))
+                -H "Authorization: Bearer $TOKEN" || true
+              EVENTS_DELETED=$((EVENTS_DELETED + 1))
             fi
           done
           echo "✅ Eventos antiguos eliminados: $EVENTS_DELETED"
@@ -625,8 +626,8 @@ jobs:
             if [ -n "$LIST_ID" ] && [ "$LIST_ID" != "null" ]; then
               curl -s -o /dev/null \
                 -X DELETE "https://graph.microsoft.com/v1.0/me/todo/lists/$LIST_ID" \
-                -H "Authorization: Bearer $TOKEN"
-              ((LISTS_DELETED++))
+                -H "Authorization: Bearer $TOKEN" || true
+              LISTS_DELETED=$((LISTS_DELETED + 1))
             fi
           done
           echo "✅ Listas To Do temporales eliminadas: $LISTS_DELETED"
