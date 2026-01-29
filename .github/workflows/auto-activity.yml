@@ -708,46 +708,24 @@ jobs:
         run: |
           echo "📝 Creando actividad en Microsoft Forms..."
           
-          # Usar endpoint /users/{email}/ para tokens de aplicación
           BASE_URL="https://graph.microsoft.com/v1.0/users/$USER_EMAIL/drive"
           
-          # Forms tiene API limitada, usamos alternativa: crear archivo markdown en carpeta Forms
-          # Esto genera actividad en OneDrive como alternativa válida
-          
           # Crear carpeta Forms si no existe
-          curl -s -o /dev/null \
-            -X POST "$BASE_URL/root/children" \
+          curl -s -o /dev/null -X POST "$BASE_URL/root/children" \
             -H "Authorization: Bearer $TOKEN" \
             -H "Content-Type: application/json" \
             -d '{"name": "Forms", "folder": {}, "@microsoft.graph.conflictBehavior": "fail"}' || true
           
-          # Crear documento de feedback como alternativa
-          FEEDBACK_DOC="# Sprint Feedback Form - $UNIQUE_SUFFIX
-
-## Preguntas de Retroalimentación
-
-1. ¿Cómo calificarías la productividad del sprint? (1-5)
-2. ¿Qué funcionó bien?
-3. ¿Qué podríamos mejorar?
-4. ¿Hay algún impedimento pendiente?
-
-## Respuestas
-Fecha: $(date)
-Sprint: $UNIQUE_SUFFIX
-
----
-Generado por GitHub Actions E5"
+          # Crear documento de feedback (contenido en una línea para evitar problemas YAML)
+          echo -e "# Sprint Feedback Form - $UNIQUE_SUFFIX\n\n## Preguntas\n1. Productividad (1-5)\n2. Que funciono bien?\n3. Que mejorar?\n\n## Respuestas\nFecha: $(date)\nSprint: $UNIQUE_SUFFIX\n\n---\nGenerado por GitHub Actions E5" > /tmp/feedback.md
           
-          echo "$FEEDBACK_DOC" > /tmp/feedback.md
-          
-          curl -s -o /dev/null \
-            -X PUT "$BASE_URL/root:/Forms/Sprint-Feedback-$UNIQUE_SUFFIX.md:/content" \
+          curl -s -o /dev/null -X PUT "$BASE_URL/root:/Forms/Sprint-Feedback-$UNIQUE_SUFFIX.md:/content" \
             -H "Authorization: Bearer $TOKEN" \
             -H "Content-Type: text/markdown" \
             --upload-file /tmp/feedback.md
           
           rm -f /tmp/feedback.md
-          echo "✅ Documento de feedback creado (alternativa a Forms)"
+          echo "✅ Documento de feedback creado"
 
       - name: 21. Limpieza Selectiva de Recursos Efímeros
         if: always()
