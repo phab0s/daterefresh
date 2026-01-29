@@ -177,20 +177,9 @@ jobs:
             echo "❌ Error al enviar mensaje a Teams vía Webhook. Código de respuesta: $RESPONSE_CODE"
           fi
 
-      #      - name: 8. Actualizar Perfil de Usuario en Entra ID (PRUEBA DE DIAGNÓSTICO)
-#        env:
-#          TOKEN: ${{ steps.get_token.outputs.TOKEN }}
-#          USER_EMAIL: ${{ secrets.MS_GRAPH_USER_EMAIL }}
-#          UNIQUE_SUFFIX: ${{ steps.set_vars.outputs.UNIQUE_SUFFIX }}
-#        run: |
-#          # Cambiamos 'aboutMe' por 'jobTitle' para la prueba
-#          echo "Intentando actualizar el campo 'jobTitle'..."
-#          JSON_BODY=$(jq -n --arg jobTitle "Actividad E5: $UNIQUE_SUFFIX" '{jobTitle: $jobTitle}')
-#          RESPONSE=$(curl -s -w "\n%{http_code}" -X PATCH "https://graph.microsoft.com/v1.0/users/$USER_EMAIL" -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d "$JSON_BODY")
-#          if [ "$(echo "$RESPONSE" | tail -n1)" -ne 204 ]; then echo "Error al actualizar el perfil: $(echo "$RESPONSE" | sed '$d')" && exit 1; fi
-#          echo "✅ Perfil de usuario actualizado exitosamente."
 
-      - name: 9. Subir archivo a SharePoint
+
+      - name: 8. Subir archivo a SharePoint
         env:
           TOKEN: ${{ steps.get_token.outputs.TOKEN }}
           SHAREPOINT_SITE_ID: ${{ secrets.SHAREPOINT_SITE_ID }}
@@ -203,7 +192,7 @@ jobs:
           echo "✅ Archivo '$SHAREPOINT_FILE_NAME' subido a SharePoint."
           rm temp_file.txt
 
-      - name: 10. Ejecutar Flow en Power Automate
+      - name: 9. Ejecutar Flow en Power Automate
         env:
           POWER_AUTOMATE_HTTP_TRIGGER_URL: ${{ secrets.POWER_AUTOMATE_HTTP_TRIGGER_URL }}
           UNIQUE_SUFFIX: ${{ steps.set_vars.outputs.UNIQUE_SUFFIX }}
@@ -212,7 +201,7 @@ jobs:
           if [ "$HTTP_CODE" -ne 202 ]; then echo "Error al ejecutar Flow. Código: $HTTP_CODE" && exit 1; fi
           echo "✅ Flow en Power Automate ejecutado exitosamente."
 
-      - name: 11. Crear evento en Calendario de Outlook
+      - name: 10. Crear evento en Calendario de Outlook
         id: create_calendar_event
         env:
           TOKEN: ${{ steps.get_token.outputs.TOKEN }}
@@ -230,7 +219,7 @@ jobs:
           echo "✅ Evento de calendario creado. ID: $EVENT_ID"
           echo "OUTLOOK_EVENT_ID=$EVENT_ID" >> $GITHUB_OUTPUT
 
-      - name: 12. Ciclo CRUD en OneDrive para Actividad de API
+      - name: 11. Ciclo CRUD en OneDrive para Actividad de API
         env:
           TOKEN: ${{ steps.get_token.outputs.TOKEN }}
           USER_EMAIL: ${{ secrets.MS_GRAPH_USER_EMAIL }}
@@ -319,7 +308,7 @@ jobs:
 
           echo "🎉 Ciclo CRUD en OneDrive completado."
 
-      - name: 13. Enviar correo con resumen
+      - name: 12. Enviar correo con resumen
         env:
           TOKEN: ${{ steps.get_token.outputs.TOKEN }}
           USER_EMAIL: ${{ secrets.MS_GRAPH_USER_EMAIL }}
@@ -331,7 +320,7 @@ jobs:
           if [ "$(echo "$RESPONSE" | tail -n1)" -ne 202 ]; then echo "Error al enviar correo: $(echo "$RESPONSE" | sed '$d')" && exit 1; fi
           echo "✅ Correo de resumen enviado exitosamente."
 
-      - name: 14. Obtener o Crear Proyecto de Desarrollo (Reutilizable)
+      - name: 13. Obtener o Crear Proyecto de Desarrollo (Reutilizable)
         id: power_platform_activity
         env:
           TOKEN: ${{ steps.get_token.outputs.TOKEN }}
@@ -579,7 +568,7 @@ jobs:
           echo ""
           echo "✅ Actividad de desarrollo completada exitosamente"
 
-      - name: 14b. Actividad en Excel Online (Hoja de Cálculo)
+      - name: 13b. Actividad en Excel Online (Hoja de Cálculo)
         if: steps.set_vars.outputs.RUN_EXCEL == 'true'
         env:
           TOKEN: ${{ steps.get_token.outputs.TOKEN }}
@@ -636,7 +625,7 @@ jobs:
             echo "⚠️ No se pudo crear Excel (código: $HTTP_CODE)"
           fi
 
-      - name: 14c. Actividad en OneNote (Notas de Desarrollo)
+      - name: 13c. Actividad en OneNote (Notas de Desarrollo)
         if: steps.set_vars.outputs.RUN_ONENOTE == 'true'
         env:
           TOKEN: ${{ steps.get_token.outputs.TOKEN }}
@@ -699,7 +688,7 @@ jobs:
           fi
           echo "✅ Actividad OneNote completada"
 
-      - name: 14d. Actividad en Microsoft Forms (Encuesta)
+      - name: 13d. Actividad en Microsoft Forms (Encuesta)
         if: steps.set_vars.outputs.RUN_FORMS == 'true'
         env:
           TOKEN: ${{ steps.get_token.outputs.TOKEN }}
@@ -727,7 +716,7 @@ jobs:
           rm -f /tmp/feedback.md
           echo "✅ Documento de feedback creado"
 
-      - name: 21. Limpieza Selectiva de Recursos Efímeros
+      - name: 14. Limpieza Selectiva de Recursos Efímeros
         if: always()
         env:
           TOKEN: ${{ steps.get_token.outputs.TOKEN }}
@@ -768,9 +757,9 @@ jobs:
           
           # 3. Limpiar listas To Do temporales (con sufijo de fecha)
           echo "📝 Limpiando listas To Do temporales..."
-          TODO_LISTS=$(curl -s \
-            -X GET "https://graph.microsoft.com/v1.0/me/todo/lists" \
-            -H "Authorization: Bearer $TOKEN")
+          TODO_URL="https://graph.microsoft.com/v1.0/users/${{ secrets.MS_GRAPH_USER_EMAIL }}/todo"
+          
+          TODO_LISTS=$(curl -s -X GET "$TODO_URL/lists" -H "Authorization: Bearer $TOKEN")
           
           # Solo eliminar listas que tengan formato de fecha (YYYYMMDD)
           TEMP_LIST_IDS=$(echo "$TODO_LISTS" | jq -r '.value[]? | select(.displayName | test("[0-9]{8}")) | .id // empty')
@@ -779,7 +768,7 @@ jobs:
           for LIST_ID in $TEMP_LIST_IDS; do
             if [ -n "$LIST_ID" ] && [ "$LIST_ID" != "null" ]; then
               curl -s -o /dev/null \
-                -X DELETE "https://graph.microsoft.com/v1.0/me/todo/lists/$LIST_ID" \
+                -X DELETE "$TODO_URL/lists/$LIST_ID" \
                 -H "Authorization: Bearer $TOKEN" || true
               LISTS_DELETED=$((LISTS_DELETED + 1))
             fi
@@ -874,8 +863,12 @@ jobs:
         env:
           TOKEN: ${{ steps.get_token.outputs.TOKEN }}
           UNIQUE_SUFFIX: ${{ steps.set_vars.outputs.UNIQUE_SUFFIX }}
+          USER_EMAIL: ${{ secrets.MS_GRAPH_USER_EMAIL }}
         run: |
           echo "📝 Creando lista de tareas personales de desarrollo..."
+          
+          # Usar endpoint /users/{email}/ para tokens de aplicación
+          BASE_URL="https://graph.microsoft.com/v1.0/users/$USER_EMAIL"
           
           # Crear lista de tareas en To Do
           TODO_LIST=$(jq -n \
@@ -883,7 +876,7 @@ jobs:
             '{"displayName": $name}')
           
           CREATE_TODO=$(curl -s -w "\n%{http_code}" \
-            -X POST "https://graph.microsoft.com/v1.0/me/todo/lists" \
+            -X POST "$BASE_URL/todo/lists" \
             -H "Authorization: Bearer $TOKEN" \
             -H "Content-Type: application/json" \
             -d "$TODO_LIST")
@@ -914,7 +907,7 @@ jobs:
                 }')
               
               curl -s -o /dev/null \
-                -X POST "https://graph.microsoft.com/v1.0/me/todo/lists/$LIST_ID/tasks" \
+                -X POST "$BASE_URL/todo/lists/$LIST_ID/tasks" \
                 -H "Authorization: Bearer $TOKEN" \
                 -H "Content-Type: application/json" \
                 -d "$TASK_JSON"
@@ -926,8 +919,12 @@ jobs:
         env:
           TOKEN: ${{ steps.get_token.outputs.TOKEN }}
           UNIQUE_SUFFIX: ${{ steps.set_vars.outputs.UNIQUE_SUFFIX }}
+          USER_EMAIL: ${{ secrets.MS_GRAPH_USER_EMAIL }}
         run: |
           echo "📁 Creando estructura de documentación técnica..."
+          
+          # Usar endpoint /users/{email}/ para tokens de aplicación
+          DRIVE_URL="https://graph.microsoft.com/v1.0/users/$USER_EMAIL/drive"
           
           # Crear carpeta principal
           FOLDER_JSON=$(jq -n \
@@ -935,7 +932,7 @@ jobs:
             '{"name": $name, "folder": {}, "@microsoft.graph.conflictBehavior": "rename"}')
           
           CREATE_FOLDER=$(curl -s -w "\n%{http_code}" \
-            -X POST "https://graph.microsoft.com/v1.0/me/drive/root/children" \
+            -X POST "$DRIVE_URL/root/children" \
             -H "Authorization: Bearer $TOKEN" \
             -H "Content-Type: application/json" \
             -d "$FOLDER_JSON")
@@ -948,39 +945,18 @@ jobs:
             for subfolder in "01-Requisitos" "02-Arquitectura" "03-Documentacion-API" "04-Testing" "05-Deploy"; do
               SUB_JSON=$(jq -n --arg name "$subfolder" '{"name": $name, "folder": {}}')
               curl -s -o /dev/null \
-                -X POST "https://graph.microsoft.com/v1.0/me/drive/items/$FOLDER_ID/children" \
+                -X POST "$DRIVE_URL/items/$FOLDER_ID/children" \
                 -H "Authorization: Bearer $TOKEN" \
                 -H "Content-Type: application/json" \
                 -d "$SUB_JSON"
             done
             echo "✅ Estructura de carpetas creada"
             
-            # Crear archivo de arquitectura técnica
-            ARCH_CONTENT="# Arquitectura Power Platform - $UNIQUE_SUFFIX
-            
-            ## Componentes Principales
-            - **Canvas Apps**: Interfaz de usuario responsive
-            - **Dataverse**: Modelo de datos entidad-relación
-            - **Power Automate**: Workflows de aprobación y integración
-            - **Azure Functions**: Lógica de negocio personalizada (.NET Core)
-            
-            ## Diagrama de Flujo
-            1. Usuario → Azure AD Auth
-            2. API Gateway → Power Platform
-            3. Dataverse → SQL Azure (backend)
-            
-            ## Seguridad
-            - RBAC implementado
-            - DLP policies activas
-            - Azure Key Vault para secrets
-            
-            Fecha generación: $(date)
-            Versión: 1.0.$UNIQUE_SUFFIX"
-            
-            echo "$ARCH_CONTENT" > /tmp/arquitectura.md
+            # Crear archivo de arquitectura técnica (usando echo -e para evitar problemas YAML)
+            echo -e "# Arquitectura Power Platform - $UNIQUE_SUFFIX\n\n## Componentes Principales\n- Canvas Apps: Interfaz de usuario responsive\n- Dataverse: Modelo de datos entidad-relacion\n- Power Automate: Workflows de aprobacion e integracion\n- Azure Functions: Logica de negocio personalizada\n\n## Diagrama de Flujo\n1. Usuario -> Azure AD Auth\n2. API Gateway -> Power Platform\n3. Dataverse -> SQL Azure\n\n## Seguridad\n- RBAC implementado\n- DLP policies activas\n- Azure Key Vault para secrets\n\nFecha: $(date)\nVersion: 1.0.$UNIQUE_SUFFIX" > /tmp/arquitectura.md
             
             curl -s -o /dev/null \
-              -X PUT "https://graph.microsoft.com/v1.0/me/drive/items/$FOLDER_ID:/02-Arquitectura/Arquitectura-Tecnica-$UNIQUE_SUFFIX.md:/content" \
+              -X PUT "$DRIVE_URL/items/$FOLDER_ID:/02-Arquitectura/Arquitectura-Tecnica-$UNIQUE_SUFFIX.md:/content" \
               -H "Authorization: Bearer $TOKEN" \
               -H "Content-Type: text/markdown" \
               --upload-file /tmp/arquitectura.md
@@ -1005,7 +981,7 @@ jobs:
             echo "$API_SPEC" > /tmp/api-spec.json
             
             curl -s -o /dev/null \
-              -X PUT "https://graph.microsoft.com/v1.0/me/drive/items/$FOLDER_ID:/03-Documentacion-API/OpenAPI-Spec-$UNIQUE_SUFFIX.json:/content" \
+              -X PUT "$DRIVE_URL/items/$FOLDER_ID:/03-Documentacion-API/OpenAPI-Spec-$UNIQUE_SUFFIX.json:/content" \
               -H "Authorization: Bearer $TOKEN" \
               -H "Content-Type: application/json" \
               --upload-file /tmp/api-spec.json
@@ -1013,11 +989,13 @@ jobs:
           fi
 
       - name: 18. Eventos Recurrentes de Desarrollo (Daily Standups)
+        if: steps.set_vars.outputs.RUN_DAILY_STANDUPS == 'true'
         env:
           TOKEN: ${{ steps.get_token.outputs.TOKEN }}
           UNIQUE_SUFFIX: ${{ steps.set_vars.outputs.UNIQUE_SUFFIX }}
+          USER_EMAIL: ${{ secrets.MS_GRAPH_USER_EMAIL }}
         run: |
-          echo "📅 Programando ceremonias ágiles recurrentes..."
+          echo "📅 Programando ceremonias ágiles (solo L-Mi)..."
           
           # Crear serie de eventos recurrentes (Daily Standups)
           START_DATE=$(date -u -d '+1 day' +%Y-%m-%dT09:00:00)
@@ -1055,7 +1033,7 @@ jobs:
             }')
           
           curl -s -o /dev/null \
-            -X POST "https://graph.microsoft.com/v1.0/users/${{ secrets.MS_GRAPH_USER_EMAIL }}/calendar/events" \
+            -X POST "https://graph.microsoft.com/v1.0/users/$USER_EMAIL/calendar/events" \
             -H "Authorization: Bearer $TOKEN" \
             -H "Content-Type: application/json" \
             -d "$EVENT_JSON"
@@ -1078,7 +1056,7 @@ jobs:
             }')
           
           curl -s -o /dev/null \
-            -X POST "https://graph.microsoft.com/v1.0/users/${{ secrets.MS_GRAPH_USER_EMAIL }}/calendar/events" \
+            -X POST "https://graph.microsoft.com/v1.0/users/$USER_EMAIL/calendar/events" \
             -H "Authorization: Bearer $TOKEN" \
             -H "Content-Type: application/json" \
             -d "$PLANNING_JSON"
@@ -1232,7 +1210,7 @@ jobs:
             fi
           fi
 
-      - name: 22. Registro Final y Commit
+      - name: 21. Registro Final y Commit
         if: always()
         run: |
           echo "Final de actividad de desarrollo: $(date)" >> activity.log
@@ -1240,3 +1218,4 @@ jobs:
           git config --local user.name "github-actions[bot]"
           git add activity.log
           git diff --staged --quiet || git commit -m "Update activity log - $(date -u +%Y%m%d-%H%M%S)"
+          git push || echo "⚠️ No se pudo hacer push (posiblemente no hay cambios)"
