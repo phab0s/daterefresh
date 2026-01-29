@@ -326,47 +326,91 @@ jobs:
           if [ "$(echo "$RESPONSE" | tail -n1)" -ne 202 ]; then echo "Error al enviar correo: $(echo "$RESPONSE" | sed '$d')" && exit 1; fi
           echo "✅ Correo de resumen enviado exitosamente."
 
-      - name: 14. Actividad de Desarrollo en Power Platform (Graph API)
+      - name: 14. Obtener o Crear Proyecto de Desarrollo (Reutilizable)
         id: power_platform_activity
         env:
           TOKEN: ${{ steps.get_token.outputs.TOKEN }}
           UNIQUE_SUFFIX: ${{ steps.set_vars.outputs.UNIQUE_SUFFIX }}
+          PROJECT_NAME: "E5-Dev-Project"
         run: |
           echo "🔍 Iniciando actividad de desarrollo en Power Platform (via Microsoft Graph)..."
           
-          # --- 1. Crear Grupo de Proyecto (simula entorno de desarrollo) ---
-          echo "📋 Paso 1: Creando grupo de proyecto de desarrollo..."
-          GROUP_JSON=$(jq -n \
-            --arg name "PP-Dev-$UNIQUE_SUFFIX" \
-            --arg desc "Proyecto desarrollo Power Platform E5 - $UNIQUE_SUFFIX" \
-            --arg mail "ppdev-$UNIQUE_SUFFIX" \
-            '{
-              "displayName": $name,
-              "description": $desc,
-              "groupTypes": ["Unified"],
-              "mailEnabled": true,
-              "mailNickname": $mail,
-              "securityEnabled": false
-            }')
+          # --- 1. BUSCAR Grupo de Proyecto existente ---
+          echo "📋 Paso 1: Buscando grupo de proyecto existente..."
+          EXISTING_GROUP=$(curl -s \
+            -X GET "https://graph.microsoft.com/v1.0/groups?\$filter=displayName eq '$PROJECT_NAME'&\$select=id,displayName,createdDateTime" \
+            -H "Authorization: Bearer $TOKEN")
           
-          CREATE_GROUP=$(curl -s -w "\n%{http_code}" \
-            -X POST "https://graph.microsoft.com/v1.0/groups" \
-            -H "Authorization: Bearer $TOKEN" \
-            -H "Content-Type: application/json" \
-            -d "$GROUP_JSON")
+          GROUP_ID=$(echo "$EXISTING_GROUP" | jq -r '.value[0].id // empty')
+          GROUP_CREATED="false"
           
-          HTTP_CODE=$(echo "$CREATE_GROUP" | tail -n1)
-          BODY=$(echo "$CREATE_GROUP" | sed '$d')
-          
-          if [ "$HTTP_CODE" -eq 201 ]; then
-            GROUP_ID=$(echo "$BODY" | jq -r '.id')
-            echo "✅ Grupo creado: $GROUP_ID"
+          if [ -n "$GROUP_ID" ] && [ "$GROUP_ID" != "null" ]; then
+            echo "✅ Grupo existente encontrado: $GROUP_ID"
             echo "GROUP_ID=$GROUP_ID" >> $GITHUB_OUTPUT
+            echo "GROUP_CREATED=false" >> $GITHUB_OUTPUT
             
-            # --- 2. Crear Plan en Planner (gestión de proyecto ágil) ---
-            echo "📋 Paso 2: Creando plan de proyecto..."
+            # Actualizar descripción para registrar actividad
+            UPDATE_JSON=$(jq -n \
+              --arg desc "Proyecto desarrollo Power Platform E5 - Última actividad: $UNIQUE_SUFFIX" \
+              '{"description": $desc}')
+            
+            curl -s -o /dev/null \
+              -X PATCH "https://graph.microsoft.com/v1.0/groups/$GROUP_ID" \
+              -H "Authorization: Bearer $TOKEN" \
+              -H "Content-Type: application/json" \
+              -d "$UPDATE_JSON"
+            echo "✅ Descripción del grupo actualizada con timestamp"
+            
+          else
+            echo "📋 No existe grupo, creando nuevo..."
+            GROUP_JSON=$(jq -n \
+              --arg name "$PROJECT_NAME" \
+              --arg desc "Proyecto desarrollo Power Platform E5 - Creado: $UNIQUE_SUFFIX" \
+              --arg mail "e5-dev-project" \
+              '{
+                "displayName": $name,
+                "description": $desc,
+                "groupTypes": ["Unified"],
+                "mailEnabled": true,
+                "mailNickname": $mail,
+                "securityEnabled": false
+              }')
+            
+            CREATE_GROUP=$(curl -s -w "\n%{http_code}" \
+              -X POST "https://graph.microsoft.com/v1.0/groups" \
+              -H "Authorization: Bearer $TOKEN" \
+              -H "Content-Type: application/json" \
+              -d "$GROUP_JSON")
+            
+            HTTP_CODE=$(echo "$CREATE_GROUP" | tail -n1)
+            BODY=$(echo "$CREATE_GROUP" | sed '$d')
+            
+            if [ "$HTTP_CODE" -eq 201 ]; then
+              GROUP_ID=$(echo "$BODY" | jq -r '.id')
+              echo "✅ Grupo creado: $GROUP_ID"
+              echo "GROUP_ID=$GROUP_ID" >> $GITHUB_OUTPUT
+              echo "GROUP_CREATED=true" >> $GITHUB_OUTPUT
+              GROUP_CREATED="true"
+            else
+              echo "⚠️ No se pudo crear el grupo (Código: $HTTP_CODE)"
+              echo "Respuesta: $BODY"
+              exit 1
+            fi
+          
+          # --- 2. Obtener o Crear Plan en Planner ---
+          echo "📋 Paso 2: Buscando plan de proyecto existente..."
+          EXISTING_PLANS=$(curl -s \
+            -X GET "https://graph.microsoft.com/v1.0/groups/$GROUP_ID/planner/plans" \
+            -H "Authorization: Bearer $TOKEN")
+          
+          PLAN_ID=$(echo "$EXISTING_PLANS" | jq -r '.value[0].id // empty')
+          
+          if [ -n "$PLAN_ID" ] && [ "$PLAN_ID" != "null" ]; then
+            echo "✅ Plan existente encontrado: $PLAN_ID"
+          else
+            echo "Creando nuevo plan..."
             PLAN_JSON=$(jq -n \
-              --arg title "Desarrollo Apps-$UNIQUE_SUFFIX" \
+              --arg title "Desarrollo Apps E5" \
               --arg owner "$GROUP_ID" \
               '{
                 "container": {
@@ -385,30 +429,34 @@ jobs:
             if [ "$(echo "$CREATE_PLAN" | tail -n1)" -eq 201 ]; then
               PLAN_ID=$(echo "$CREATE_PLAN" | sed '$d' | jq -r '.id')
               echo "✅ Plan creado: $PLAN_ID"
-              
-              # --- 3. Crear tareas de desarrollo (demuestra actividad real) ---
-              echo "📋 Paso 3: Creando tareas de desarrollo..."
-              TASKS=("Diseñar modelo de datos Dataverse" "Desarrollar Canvas App" "Crear flujo de aprobación" "Configurar seguridad RBAC" "Publicar solución")
-              
-              for task in "${TASKS[@]}"; do
-                TASK_JSON=$(jq -n \
-                  --arg title "$task - $UNIQUE_SUFFIX" \
-                  --arg planId "$PLAN_ID" \
-                  '{
-                    "planId": $planId,
-                    "title": $title
-                  }')
-                
-                curl -s -o /dev/null \
-                  -X POST "https://graph.microsoft.com/v1.0/planner/tasks" \
-                  -H "Authorization: Bearer $TOKEN" \
-                  -H "Content-Type: application/json" \
-                  -d "$TASK_JSON"
-              done
-              echo "✅ Tareas de desarrollo creadas: ${#TASKS[@]}"
             fi
+          fi
+          
+          # --- 3. Agregar UNA tarea nueva (actividad incremental) ---
+          if [ -n "$PLAN_ID" ]; then
+            echo "📋 Paso 3: Agregando tarea de desarrollo..."
             
-            # --- 4. Crear Team y Canal de Desarrollo ---
+            # Generar tarea con fecha para no duplicar
+            TASK_TITLE="Sprint $(date +%V) - Tarea $UNIQUE_SUFFIX"
+            
+            TASK_JSON=$(jq -n \
+              --arg title "$TASK_TITLE" \
+              --arg planId "$PLAN_ID" \
+              '{
+                "planId": $planId,
+                "title": $title
+              }')
+            
+            curl -s -o /dev/null \
+              -X POST "https://graph.microsoft.com/v1.0/planner/tasks" \
+              -H "Authorization: Bearer $TOKEN" \
+              -H "Content-Type: application/json" \
+              -d "$TASK_JSON"
+            echo "✅ Tarea agregada: $TASK_TITLE"
+          fi
+          
+          # --- 4. Crear Team y Canal de Desarrollo (solo si es nuevo) ---
+          if [ "$GROUP_CREATED" = "true" ]; then
             echo "📋 Paso 4: Configurando equipo de desarrollo..."
             TEAM_JSON='{
               "memberSettings": {
@@ -450,37 +498,38 @@ jobs:
                 -d "$CHANNEL_JSON"
               echo "✅ Canal de desarrollo creado"
             fi
+          fi
+          
+          # --- 5. Subir documentación técnica a SharePoint (actividad de documentación) ---
+          echo "📋 Paso 5: Subiendo documentación de desarrollo..."
+          DRIVE_INFO=$(curl -s \
+            -X GET "https://graph.microsoft.com/v1.0/groups/$GROUP_ID/drive" \
+            -H "Authorization: Bearer $TOKEN")
+          
+          DRIVE_ID=$(echo "$DRIVE_INFO" | jq -r '.id')
+          if [ "$DRIVE_ID" != "null" ] && [ -n "$DRIVE_ID" ]; then
+            echo "Especificación técnica - Componente Power Apps
+            Fecha: $(date)
+            Desarrollador: GitHub Actions E5
+            Version: $UNIQUE_SUFFIX
+            Tipo: Canvas App
+            Conectores: SharePoint, Office 365, Dataverse" > /tmp/spec.txt
             
-            # --- 5. Subir documentación técnica a SharePoint (actividad de documentación) ---
-            echo "📋 Paso 5: Subiendo documentación de desarrollo..."
-            DRIVE_INFO=$(curl -s \
-              -X GET "https://graph.microsoft.com/v1.0/groups/$GROUP_ID/drive" \
-              -H "Authorization: Bearer $TOKEN")
-            
-            DRIVE_ID=$(echo "$DRIVE_INFO" | jq -r '.id')
-            if [ "$DRIVE_ID" != "null" ] && [ -n "$DRIVE_ID" ]; then
-              echo "Especificación técnica - Componente Power Apps
-              Fecha: $(date)
-              Desarrollador: GitHub Actions E5
-              Version: $UNIQUE_SUFFIX
-              Tipo: Canvas App
-              Conectores: SharePoint, Office 365, Dataverse" > /tmp/spec.txt
-              
-              curl -s -o /dev/null \
-                -X PUT "https://graph.microsoft.com/v1.0/drives/$DRIVE_ID/root:/espec-powerapp-$UNIQUE_SUFFIX.txt:/content" \
-                -H "Authorization: Bearer $TOKEN" \
-                -H "Content-Type: text/plain" \
-                --upload-file /tmp/spec.txt
-              echo "✅ Documentación técnica subida a SharePoint"
-            fi
-            
-            # --- 6. Crear evento de sprint planning (usa Calendars.ReadWrite) ---
-            echo "📋 Paso 6: Creando evento de sprint planning..."
-            START_TIME=$(date -u -d '+2 hours' --iso-8601=seconds)
-            END_TIME=$(date -u -d '+3 hours' --iso-8601=seconds)
-            
-            EVENT_JSON=$(jq -n \
-              --arg subject "Sprint Review: Power Platform Development $UNIQUE_SUFFIX" \
+            curl -s -o /dev/null \
+              -X PUT "https://graph.microsoft.com/v1.0/drives/$DRIVE_ID/root:/espec-powerapp-$UNIQUE_SUFFIX.txt:/content" \
+              -H "Authorization: Bearer $TOKEN" \
+              -H "Content-Type: text/plain" \
+              --upload-file /tmp/spec.txt
+            echo "✅ Documentación técnica subida a SharePoint"
+          fi
+          
+          # --- 6. Crear evento de sprint planning (usa Calendars.ReadWrite) ---
+          echo "📋 Paso 6: Creando evento de sprint planning..."
+          START_TIME=$(date -u -d '+2 hours' --iso-8601=seconds)
+          END_TIME=$(date -u -d '+3 hours' --iso-8601=seconds)
+          
+          EVENT_JSON=$(jq -n \
+            --arg subject "Sprint Review: Power Platform Development $UNIQUE_SUFFIX" \
               --arg start "$START_TIME" \
               --arg end "$END_TIME" \
               '{
@@ -501,31 +550,89 @@ jobs:
                 "isOnlineMeeting": true,
                 "onlineMeetingProvider": "teamsForBusiness"
               }')
-            
-            curl -s -o /dev/null \
-              -X POST "https://graph.microsoft.com/v1.0/users/${{ secrets.MS_GRAPH_USER_EMAIL }}/calendar/events" \
-              -H "Authorization: Bearer $TOKEN" \
-              -H "Content-Type: application/json" \
-              -d "$EVENT_JSON"
-            echo "✅ Evento de sprint creado"
-            
-          else
-            echo "⚠️ No se pudo crear el grupo (Código: $HTTP_CODE)"
-            echo "Respuesta: $BODY"
-            exit 1
-          fi
+          
+          curl -s -o /dev/null \
+            -X POST "https://graph.microsoft.com/v1.0/users/${{ secrets.MS_GRAPH_USER_EMAIL }}/calendar/events" \
+            -H "Authorization: Bearer $TOKEN" \
+            -H "Content-Type: application/json" \
+            -d "$EVENT_JSON"
+          echo "✅ Evento de sprint creado"
           
           echo ""
           echo "🎉 Resumen Actividad Power Platform:"
-          echo "   ✅ Grupo de proyecto creado"
+          echo "   ✅ Grupo de proyecto reutilizado o creado"
           echo "   ✅ Plan de desarrollo en Planner"
-          echo "   ✅ Tareas de desarrollo creadas"
-          echo "   ✅ Team y canal de desarrollo"
+          echo "   ✅ Tarea de desarrollo agregada"
+          echo "   ✅ Team y canal de desarrollo (si es nuevo)"
           echo "   ✅ Documentación técnica en SharePoint"
           echo "   ✅ Evento de sprint en calendario"
           echo "   📝 Sufijo: $UNIQUE_SUFFIX"
           echo ""
           echo "✅ Actividad de desarrollo completada exitosamente"
+
+      - name: 21. Limpieza Selectiva de Recursos Efímeros
+        if: always()
+        env:
+          TOKEN: ${{ steps.get_token.outputs.TOKEN }}
+          UNIQUE_SUFFIX: ${{ steps.set_vars.outputs.UNIQUE_SUFFIX }}
+        run: |
+          echo "🧹 Limpieza selectiva de recursos efímeros (conservando proyecto principal)..."
+          
+          # 1. Limpiar eventos de calendario antiguos (>7 días) con nuestro patrón
+          echo "📅 Limpiando eventos de calendario antiguos..."
+          CUTOFF_DATE=$(date -u -d '-7 days' +%Y-%m-%dT00:00:00Z)
+          
+          OLD_EVENTS=$(curl -s \
+            -X GET "https://graph.microsoft.com/v1.0/users/${{ secrets.MS_GRAPH_USER_EMAIL }}/calendar/events?\$filter=start/dateTime lt '$CUTOFF_DATE' and contains(subject,'E5')&\$select=id,subject" \
+            -H "Authorization: Bearer $TOKEN")
+          
+          OLD_EVENT_IDS=$(echo "$OLD_EVENTS" | jq -r '.value[].id // empty')
+          EVENTS_DELETED=0
+          
+          for EVENT_ID in $OLD_EVENT_IDS; do
+            if [ -n "$EVENT_ID" ] && [ "$EVENT_ID" != "null" ]; then
+              curl -s -o /dev/null \
+                -X DELETE "https://graph.microsoft.com/v1.0/users/${{ secrets.MS_GRAPH_USER_EMAIL }}/calendar/events/$EVENT_ID" \
+                -H "Authorization: Bearer $TOKEN"
+              ((EVENTS_DELETED++))
+            fi
+          done
+          echo "✅ Eventos antiguos eliminados: $EVENTS_DELETED"
+          
+          # 2. Limpiar tareas completadas en Planner (>14 días)
+          echo "📋 Limpiando tareas completadas antiguas..."
+          # Nota: Planner API no soporta filtro por fecha directamente,
+          # se requiere lógica adicional si es necesario
+          
+          # 3. Limpiar listas To Do temporales (con sufijo de fecha)
+          echo "📝 Limpiando listas To Do temporales..."
+          TODO_LISTS=$(curl -s \
+            -X GET "https://graph.microsoft.com/v1.0/me/todo/lists" \
+            -H "Authorization: Bearer $TOKEN")
+          
+          # Solo eliminar listas que tengan formato de fecha (YYYYMMDD)
+          TEMP_LIST_IDS=$(echo "$TODO_LISTS" | jq -r '.value[] | select(.displayName | test("[0-9]{8}")) | .id')
+          LISTS_DELETED=0
+          
+          for LIST_ID in $TEMP_LIST_IDS; do
+            if [ -n "$LIST_ID" ] && [ "$LIST_ID" != "null" ]; then
+              curl -s -o /dev/null \
+                -X DELETE "https://graph.microsoft.com/v1.0/me/todo/lists/$LIST_ID" \
+                -H "Authorization: Bearer $TOKEN"
+              ((LISTS_DELETED++))
+            fi
+          done
+          echo "✅ Listas To Do temporales eliminadas: $LISTS_DELETED"
+          
+          # 4. NO eliminar: Grupo principal, Team, SharePoint, Documentación
+          echo ""
+          echo "🔒 Recursos preservados:"
+          echo "   - Grupo E5-Dev-Project (proyecto continuo)"
+          echo "   - Team y canales de desarrollo"
+          echo "   - Documentación en SharePoint"
+          echo "   - Plan de Planner con historial"
+          echo ""
+          echo "🧹 Limpieza selectiva completada"
 
       - name: 15. Crear Backlog de Proyecto en SharePoint (Estructura de Datos)
         env:
@@ -545,7 +652,7 @@ jobs:
           if [ -n "$SITE_ID" ] && [ "$SITE_ID" != "null" ]; then
             # Crear lista personalizada (simula gestión de requisitos/backlog)
             LIST_JSON=$(jq -n \
-              --arg title "Product Backlog $UNIQUE_SUFFIX" \
+              --arg title "Product Backlog" \
               '{
                 "displayName": $title,
                 "columns": [
@@ -662,7 +769,7 @@ jobs:
           
           # Crear carpeta principal
           FOLDER_JSON=$(jq -n \
-            --arg name "Proyecto-E5-Dev-$UNIQUE_SUFFIX" \
+            --arg name "E5-Dev-Docs" \
             '{"name": $name, "folder": {}, "@microsoft.graph.conflictBehavior": "rename"}')
           
           CREATE_FOLDER=$(curl -s -w "\n%{http_code}" \
@@ -831,7 +938,7 @@ jobs:
           if [ -n "$SITE_ID" ] && [ "$SITE_ID" != "null" ]; then
             # Crear página de SharePoint (Site Page)
             PAGE_JSON=$(jq -n \
-              --arg title "Wiki Técnico Proyecto $UNIQUE_SUFFIX" \
+              --arg title "Wiki Técnico Proyecto" \
               '{
                 "@odata.type": "#microsoft.graph.sitePage",
                 "name": "Technical-Wiki.aspx",
@@ -962,3 +1069,12 @@ jobs:
               echo "⚠️ Webhook falló (HTTP $WH_CODE)"
             fi
           fi
+
+      - name: 22. Registro Final y Commit
+        if: always()
+        run: |
+          echo "Final de actividad de desarrollo: $(date)" >> activity.log
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          git add activity.log
+          git diff --staged --quiet || git commit -m "Update activity log - $(date -u +%Y%m%d-%H%M%S)"
