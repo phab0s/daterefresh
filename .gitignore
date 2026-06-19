@@ -1,0 +1,38 @@
+# === Secrets y archivos sensibles (NUNCA al repo) ===
+# Vault local cifrado de secrets (DPAPI)
+diagnostic/.vault.enc
+*.vault.enc
+.vault.enc
+
+# Capturas de logs de GitHub Actions que puedan contener datos
+*.actions.log
+diagnostic/_*.ps1
+
+# Archivos de texto con posibles secretos (por seguridad, por si se crean)
+SECRETS.txt
+*secret*.txt
+*.secret
+.env
+.env.*
+credentials*.json
+*.key
+*.pem
+
+# === PowerShell ===
+*.ps1~*
+*.psd1.bak
+
+# === OS ===
+.DS_Store
+Thumbs.db
+desktop.ini
+# 'nul' es un nombre reservado en Windows; a veces se crea un archivo literal
+# por redirecciones tipo `2>nul` en cmd. Ignorarlo por seguridad.
+nul
+
+# === Editores ===
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
